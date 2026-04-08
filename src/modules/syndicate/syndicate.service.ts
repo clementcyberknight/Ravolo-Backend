@@ -1,5 +1,9 @@
 import type { Redis } from "ioredis";
-import { IDEMPOTENCY_TTL_SEC, MAX_SYNDICATE_MEMBERS } from "../../config/constants.js";
+import {
+  IDEMPOTENCY_TTL_SEC,
+  MAX_SYNDICATE_MEMBERS,
+  MIN_SYNDICATE_CREATE_LEVEL,
+} from "../../config/constants.js";
 import { logger } from "../../infrastructure/logger/logger.js";
 import {
   inventoryKey,
@@ -73,7 +77,6 @@ import {
   viewSyndicateMemberSchema,
 } from "./syndicate.validator.js";
 
-const MIN_CREATE_LEVEL = 13;
 const CHAT_MAX = 200;
 
 function toInt(n: unknown, fallback: number): number {
@@ -209,7 +212,7 @@ export class SyndicateService {
         },
         {
           userId,
-          minLevel: MIN_CREATE_LEVEL,
+          minLevel: MIN_SYNDICATE_CREATE_LEVEL,
           name: cmd.name,
           description: cmd.description,
           visibility: cmd.visibility,
@@ -545,7 +548,7 @@ export class SyndicateService {
         return new AppError("ALREADY_IN_SYNDICATE", "Already in a syndicate");
       if (msg.includes("ERR_LEVEL_TOO_LOW"))
         return new AppError("LEVEL_TOO_LOW", "Level too low", {
-          minLevel: MIN_CREATE_LEVEL,
+          minLevel: MIN_SYNDICATE_CREATE_LEVEL,
         });
       if (msg.includes("ERR_NAME_TAKEN"))
         return new AppError("NAME_TAKEN", "Syndicate name already taken");

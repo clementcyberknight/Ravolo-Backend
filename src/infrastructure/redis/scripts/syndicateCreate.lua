@@ -31,7 +31,7 @@ if sid and sid ~= '' then
 end
 
 local lvl = tonumber(redis.call('HGET', KEYS[3], 'level') or '1') or 1
-local minLevel = tonumber(ARGV[2]) or 13
+local minLevel = tonumber(ARGV[2]) or 1
 if lvl < minLevel then
   return redis.error_reply('ERR_LEVEL_TOO_LOW')
 end

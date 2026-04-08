@@ -137,6 +137,22 @@ export class SyndicateRepository {
     return out;
   }
 
+  async getIdolStatus(
+    redis: Redis,
+    syndicateId: string,
+  ): Promise<{ level: number; status: string; blessedUntilMs: number; punishedUntilMs: number }> {
+    const raw = await redis.hgetall(syndicateIdolKey(syndicateId));
+    const level = Number(raw?.level);
+    const blessedUntil = Number(raw?.blessedUntilMs);
+    const punishedUntil = Number(raw?.punishedUntilMs);
+    return {
+      level: Number.isFinite(level) && level >= 0 ? Math.floor(level) : 0,
+      status: raw?.status ?? "none",
+      blessedUntilMs: Number.isFinite(blessedUntil) && blessedUntil >= 0 ? Math.floor(blessedUntil) : 0,
+      punishedUntilMs: Number.isFinite(punishedUntil) && punishedUntil >= 0 ? Math.floor(punishedUntil) : 0,
+    };
+  }
+
   async chatRecent(redis: Redis, syndicateId: string, limit: number): Promise<string[]> {
     const n = Math.max(1, Math.min(500, limit));
     return (await redis.lrange(syndicateChatKey(syndicateId), -n, -1)) ?? [];

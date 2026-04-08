@@ -89,3 +89,14 @@ export const viewContributionSchema = z.object({
   syndicateId: z.string().min(1).max(64),
   userId: z.string().min(1).max(128),
 });
+
+export const bankSellSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  itemId: z.string().min(1).max(64),
+  quantity: z.coerce.number().int().positive().max(1_000_000_000),
+});
+
+export const syndicateDashboardSchema = z.object({
+  syndicateId: z.string().min(1).max(64),
+});

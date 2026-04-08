@@ -1,6 +1,10 @@
 import type { Redis } from "ioredis";
 import { serverNowMs } from "../../shared/utils/time.js";
-import { buyCostGold, sellPayoutGold, toSafeGold } from "../../shared/utils/gold.js";
+import {
+  buyCostGold,
+  sellPayoutGold,
+  toSafeGold,
+} from "../../shared/utils/gold.js";
 import { AppError } from "../../shared/errors/appError.js";
 import {
   buyIdempotencyKey,
@@ -22,16 +26,28 @@ import {
   produceBasePriceMicro,
   buyBasePriceMicro,
   PRICED_ITEM_IDS,
-  resolveBaseMicro,
 } from "./market.catalog.js";
 import { treasuryTradeSchema } from "./market.validator.js";
 import type { BuyResult, SellResult, MarketStatus } from "./market.types.js";
 import { OnboardingService } from "../onboarding/onboarding.service.js";
-import { redisTreasuryBuy, redisTreasurySell } from "../../infrastructure/redis/commands.js";
-import { IDEMPOTENCY_TTL_SEC, SPREAD_BUY_FACTOR, SPREAD_SELL_FACTOR } from "../../config/constants.js";
-import { getEventMultiplier, getActiveEvent } from "../ai-events/event.service.js";
+import {
+  redisTreasuryBuy,
+  redisTreasurySell,
+} from "../../infrastructure/redis/commands.js";
+import {
+  IDEMPOTENCY_TTL_SEC,
+  SPREAD_BUY_FACTOR,
+  SPREAD_SELL_FACTOR,
+} from "../../config/constants.js";
+import {
+  getEventMultiplier,
+  getActiveEvent,
+} from "../ai-events/event.service.js";
 import { AnalyticsService } from "../analytics/analytics.service.js";
-import { userSyndicateIdKey, syndicateTaxPenaltyKey } from "../../infrastructure/redis/keys.js";
+import {
+  userSyndicateIdKey,
+  syndicateTaxPenaltyKey,
+} from "../../infrastructure/redis/keys.js";
 
 function isReplyError(err: unknown): err is { message: string } {
   return typeof err === "object" && err !== null && "message" in err;
@@ -64,7 +80,10 @@ export class MarketService {
     const n = Number(raw);
     if (Number.isFinite(n) && n >= 1) return Math.floor(n);
     // Fallback: apply spread to the base sell price
-    return Math.max(1, Math.round(produceBasePriceMicro(item) * SPREAD_SELL_FACTOR));
+    return Math.max(
+      1,
+      Math.round(produceBasePriceMicro(item) * SPREAD_SELL_FACTOR),
+    );
   }
 
   async getAllPrices(): Promise<MarketStatus> {
@@ -81,13 +100,19 @@ export class MarketService {
       // Resolve buy micro-price
       let buyMicro = Number(rawBuy[id]) || 0;
       if (buyMicro < 1) {
-        buyMicro = Math.max(1, Math.round(buyBasePriceMicro(id) * SPREAD_BUY_FACTOR));
+        buyMicro = Math.max(
+          1,
+          Math.round(buyBasePriceMicro(id) * SPREAD_BUY_FACTOR),
+        );
       }
 
       // Resolve sell micro-price
       let sellMicro = Number(rawSell[id]) || 0;
       if (sellMicro < 1) {
-        sellMicro = Math.max(1, Math.round(produceBasePriceMicro(id) * SPREAD_SELL_FACTOR));
+        sellMicro = Math.max(
+          1,
+          Math.round(produceBasePriceMicro(id) * SPREAD_SELL_FACTOR),
+        );
       }
 
       // Apply AI event multiplier to both sides
@@ -144,7 +169,9 @@ export class MarketService {
     const { item, quantity, requestId } = parsed.data;
 
     if (!isTreasurySellable(item)) {
-      throw new AppError("UNKNOWN_ITEM", "Item cannot be sold to treasury", { item });
+      throw new AppError("UNKNOWN_ITEM", "Item cannot be sold to treasury", {
+        item,
+      });
     }
 
     // Use the SELL price (what the CBN pays the player — lower side of spread)
@@ -169,7 +196,10 @@ export class MarketService {
     goldPaid = toSafeGold(goldPaid);
 
     if (goldPaid < 0) {
-      throw new AppError("BAD_REQUEST", "Invalid settlement", { item, quantity });
+      throw new AppError("BAD_REQUEST", "Invalid settlement", {
+        item,
+        quantity,
+      });
     }
 
     const keys = {
@@ -193,12 +223,19 @@ export class MarketService {
       });
     } catch (e) {
       if (isReplyError(e) && e.message.includes("ERR_INSUFFICIENT_INV")) {
-        throw new AppError("INSUFFICIENT_INV", "Not enough inventory", { item, quantity });
+        throw new AppError("INSUFFICIENT_INV", "Not enough inventory", {
+          item,
+          quantity,
+        });
       }
       if (isReplyError(e) && e.message.includes("ERR_TREASURY_DEPLETED")) {
-        throw new AppError("TREASURY_DEPLETED", "Treasury cannot settle this sale", {
-          item,
-        });
+        throw new AppError(
+          "TREASURY_DEPLETED",
+          "Treasury cannot settle this sale",
+          {
+            item,
+          },
+        );
       }
       throw e;
     }

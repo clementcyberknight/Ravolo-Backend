@@ -50,6 +50,7 @@ let syndicateBuyShieldSha: string | null = null;
 let syndicateAttackSha: string | null = null;
 let syndicateIdolContributeSha: string | null = null;
 let syndicateLeaveOrDisbandSha: string | null = null;
+let syndicateBankSellSha: string | null = null;
 let decaySha: string | null = null;
 let redeemRefreshTokenSha: string | null = null;
 
@@ -101,6 +102,10 @@ export async function loadRedisScripts(redis: Redis): Promise<void> {
     resolveLuaFile("syndicateLeaveOrDisband.lua"),
     "utf8",
   );
+  const syndicateBankSellSrc = readFileSync(
+    resolveLuaFile("syndicateBankSell.lua"),
+    "utf8",
+  );
   const decaySrc = readFileSync(resolveLuaFile("decay.lua"), "utf8");
 
   plantSha = (await redis.script("LOAD", plantSrc)) as string;
@@ -146,6 +151,10 @@ export async function loadRedisScripts(redis: Redis): Promise<void> {
   syndicateLeaveOrDisbandSha = (await redis.script(
     "LOAD",
     syndicateLeaveOrDisbandSrc,
+  )) as string;
+  syndicateBankSellSha = (await redis.script(
+    "LOAD",
+    syndicateBankSellSrc,
   )) as string;
   decaySha = (await redis.script("LOAD", decaySrc)) as string;
   const redeemRefreshTokenSrc = readFileSync(
@@ -1093,6 +1102,77 @@ export async function redisSyndicateDeposit(
     if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
       await loadRedisScripts(redis);
       return redisSyndicateDeposit(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export type SyndicateBankSellResult = {
+  item: string;
+  quantity: number;
+  goldPaid: number;
+};
+
+function parseSyndicateBankSellPayload(raw: string): SyndicateBankSellResult {
+  const parts = raw.split("|");
+  if (parts[0] !== "OK" || parts.length !== 4) {
+    throw new Error(`Invalid syndicate bank sell payload: ${raw}`);
+  }
+  return {
+    item: parts[1]!,
+    quantity: Number(parts[2]),
+    goldPaid: Number(parts[3]),
+  };
+}
+
+export async function redisSyndicateBankSell(
+  redis: Redis,
+  keys: {
+    userSyndicateKey: string;
+    rolesKey: string;
+    bankItemsKey: string;
+    bankGoldKey: string;
+    treasuryReserveKey: string;
+    sellFlowKey: string;
+    holdingsKey: string;
+    idempKey: string;
+  },
+  args: {
+    userId: string;
+    syndicateId: string;
+    item: string;
+    quantity: number;
+    goldPayout: number;
+    idempTtlSec: number;
+    nowMs: number;
+  },
+): Promise<SyndicateBankSellResult> {
+  if (!syndicateBankSellSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      syndicateBankSellSha,
+      8,
+      keys.userSyndicateKey,
+      keys.rolesKey,
+      keys.bankItemsKey,
+      keys.bankGoldKey,
+      keys.treasuryReserveKey,
+      keys.sellFlowKey,
+      keys.holdingsKey,
+      keys.idempKey,
+      args.userId,
+      args.syndicateId,
+      args.item,
+      String(args.quantity),
+      String(args.goldPayout),
+      String(args.idempTtlSec),
+      String(args.nowMs),
+    )) as string;
+    return parseSyndicateBankSellPayload(res);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisSyndicateBankSell(redis, keys, args);
     }
     throw e;
   }

@@ -108,3 +108,58 @@ export type ViewContributionQuery = {
   syndicateId: string;
   userId: string;
 };
+
+export type BankSellCommand = {
+  requestId: string;
+  syndicateId: string;
+  itemId: string;
+  quantity: number;
+};
+
+export type BankSellResult = {
+  item: string;
+  quantity: number;
+  goldPaid: number;
+  priceMicro: number;
+};
+
+export type SyndicateDashboardQuery = {
+  syndicateId: string;
+};
+
+export type DashboardActiveBoost = {
+  shieldExpiresAtMs: number;
+  idolLevel: number;
+  idolStatus: "blessed" | "punished" | "none";
+  blessedUntilMs: number;
+  punishedUntilMs: number;
+};
+
+export type DashboardMember = {
+  userId: string;
+  role: SyndicateRole;
+  level: number;
+  lastSeenAtMs: number;
+  online: boolean;
+};
+
+export type CommodityStat = {
+  itemId: string;
+  quantity: number;
+  sellPriceMicro: number;
+  sellPriceGold: number;
+  monopolyPct: number;
+  crashPct: number;
+  memberShares: Record<string, number>;
+};
+
+export type SyndicateDashboardView = {
+  name: string;
+  emblemId: string;
+  activeBoost: DashboardActiveBoost;
+  totalGold: number;
+  totalMembers: number;
+  onlineCount: number;
+  members: DashboardMember[];
+  commodities: CommodityStat[];
+};

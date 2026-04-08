@@ -31,6 +31,8 @@ export type WsInboundMessage =
   | { type: "VIEW_COMMODITY_BANK"; payload: unknown }
   | { type: "VIEW_MEMBER_CONTRIBUTION"; payload: unknown }
   | { type: "VIEW_LEADERBOARD"; payload: unknown }
+  | { type: "SYNDICATE_DASHBOARD"; payload: unknown }
+  | { type: "SYNDICATE_BANK_SELL"; payload: unknown }
   | { type: "GET_GAME_STATE"; payload?: unknown }
   | { type: "PING"; payload?: unknown };
 
@@ -64,6 +66,8 @@ export type WsOutboundMessage =
   | { type: "VIEW_COMMODITY_BANK_OK"; data: unknown }
   | { type: "VIEW_MEMBER_CONTRIBUTION_OK"; data: unknown }
   | { type: "VIEW_LEADERBOARD_OK"; data: unknown }
+  | { type: "SYNDICATE_DASHBOARD_OK"; data: unknown }
+  | { type: "SYNDICATE_BANK_SELL_OK"; data: unknown }
   | { type: "AI_EVENT"; data: unknown }
   | {
       type: "GAME_STATUS";

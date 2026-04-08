@@ -3,6 +3,12 @@ import {
   IDEMPOTENCY_TTL_SEC,
   MAX_SYNDICATE_MEMBERS,
   MIN_SYNDICATE_CREATE_LEVEL,
+  ONLINE_THRESHOLD_MS,
+  PRICE_MICRO_PER_GOLD,
+  SCARCITY_TOTAL_UNITS,
+  PRICE_DEMAND_CLAMP,
+  PRICE_SCARCITY_CLAMP,
+  SPREAD_SELL_FACTOR,
 } from "../../config/constants.js";
 import { logger } from "../../infrastructure/logger/logger.js";
 import {
@@ -28,10 +34,15 @@ import {
   userSyndicateIdKey,
   walletKey,
   syndicateHoldingsKey,
+  treasurySellPricesKey,
+  treasuryBuyFlowKey,
+  treasurySellFlowKey,
+  treasuryReserveKey,
 } from "../../infrastructure/redis/keys.js";
 import {
   redisSyndicateAcceptJoin,
   redisSyndicateAttack,
+  redisSyndicateBankSell,
   redisSyndicateBuyShield,
   redisSyndicateCreate,
   redisSyndicateDeposit,
@@ -40,13 +51,20 @@ import {
   redisSyndicateRequestJoin,
 } from "../../infrastructure/redis/commands.js";
 import { AppError } from "../../shared/errors/appError.js";
+import { sellPayoutGold, toSafeGold } from "../../shared/utils/gold.js";
+import { isTreasurySellable, produceBasePriceMicro, resolveBaseMicro } from "../market/market.catalog.js";
+import { getEventMultiplier } from "../ai-events/event.service.js";
 import { OnboardingService } from "../onboarding/onboarding.service.js";
 import { SyndicateRepository } from "./syndicate.repository.js";
 import type {
   AcceptJoinCommand,
   AttackSyndicateCommand,
+  BankSellCommand,
+  BankSellResult,
   BuyShieldCommand,
+  CommodityStat,
   CreateSyndicateCommand,
+  DashboardMember,
   DepositBankCommand,
   DisbandSyndicateCommand,
   IdolContributeCommand,
@@ -54,6 +72,8 @@ import type {
   ListSyndicatesQuery,
   RequestJoinCommand,
   SyndicateChatSendCommand,
+  SyndicateDashboardQuery,
+  SyndicateDashboardView,
   SyndicateMember,
   SyndicateSummary,
   SyndicateView,
@@ -64,6 +84,7 @@ import type {
 import {
   acceptJoinSchema,
   attackSyndicateSchema,
+  bankSellSchema,
   buyShieldSchema,
   createSyndicateSchema,
   depositBankSchema,
@@ -72,6 +93,7 @@ import {
   leaveSyndicateSchema,
   requestJoinSchema,
   syndicateChatSendSchema,
+  syndicateDashboardSchema,
   viewBankSchema,
   viewContributionSchema,
   viewSyndicateMemberSchema,
@@ -337,6 +359,70 @@ export class SyndicateService {
     return { ok: true };
   }
 
+  async bankSell(userId: string, raw: unknown): Promise<BankSellResult> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = bankSellSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid bank sell payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as BankSellCommand;
+
+    if (!isTreasurySellable(cmd.itemId))
+      throw new AppError("UNKNOWN_ITEM", "Item cannot be sold to treasury", {
+        item: cmd.itemId,
+      });
+
+    let priceMicro = toInt(
+      await this.redis.hget(treasurySellPricesKey(), cmd.itemId),
+      0,
+    );
+    if (priceMicro < 1) {
+      priceMicro = Math.max(
+        1,
+        Math.round(produceBasePriceMicro(cmd.itemId) * SPREAD_SELL_FACTOR),
+      );
+    }
+
+    const eventMul = await getEventMultiplier(this.redis, cmd.itemId);
+    priceMicro = Math.max(1, Math.floor(priceMicro * eventMul));
+
+    const goldPaid = toSafeGold(sellPayoutGold(priceMicro, cmd.quantity));
+
+    try {
+      const res = await redisSyndicateBankSell(
+        this.redis,
+        {
+          userSyndicateKey: userSyndicateIdKey(userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          bankItemsKey: syndicateBankItemsKey(cmd.syndicateId),
+          bankGoldKey: syndicateBankGoldKey(cmd.syndicateId),
+          treasuryReserveKey: treasuryReserveKey(),
+          sellFlowKey: treasurySellFlowKey(),
+          holdingsKey: syndicateHoldingsKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_bank_sell:${cmd.requestId}`,
+        },
+        {
+          userId,
+          syndicateId: cmd.syndicateId,
+          item: cmd.itemId,
+          quantity: cmd.quantity,
+          goldPayout: goldPaid,
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+          nowMs: nowMs(),
+        },
+      );
+      return {
+        item: res.item,
+        quantity: res.quantity,
+        goldPaid: res.goldPaid,
+        priceMicro,
+      };
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+  }
+
   async buyShield(
     userId: string,
     raw: unknown,
@@ -585,6 +671,8 @@ export class SyndicateService {
         return new AppError("INSUFFICIENT_INV", "Insufficient inventory");
       if (msg.includes("ERR_BAD_ARGS"))
         return new AppError("BAD_REQUEST", "Invalid request");
+      if (msg.includes("ERR_TREASURY_DEPLETED"))
+        return new AppError("TREASURY_DEPLETED", "Treasury depleted");
     }
     logger.error({ err: e }, "unmapped syndicate lua error");
     return new AppError("INTERNAL", "Internal error");
@@ -736,6 +824,172 @@ export class SyndicateService {
       })
       .filter((x) => x !== null);
     return { messages: msgs };
+  }
+
+  async dashboard(userId: string, raw: unknown): Promise<SyndicateDashboardView> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = syndicateDashboardSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid dashboard payload");
+    const { syndicateId } = parsed.data as SyndicateDashboardQuery;
+
+    const sid = await this.redis.get(userSyndicateIdKey(userId));
+    if (!sid || sid !== syndicateId)
+      throw new AppError("NOT_MEMBER" as never, "Not a member");
+
+    const now = nowMs();
+
+    // ── Pipeline 1: all syndicate-scoped + global market reads ────────────
+    const p1 = this.redis.multi();
+    p1.hgetall(syndicateMetaKey(syndicateId));                        // 0
+    p1.get(syndicateBankGoldKey(syndicateId));                        // 1
+    p1.hgetall(syndicateBankItemsKey(syndicateId));                   // 2
+    p1.get(syndicateShieldExpiresAtKey(syndicateId));                 // 3
+    p1.hgetall(syndicateIdolKey(syndicateId));                        // 4
+    p1.smembers(syndicateMembersKey(syndicateId));                    // 5
+    p1.hgetall(syndicateContributionItemsKey(syndicateId));           // 6
+    p1.hgetall(treasurySellPricesKey());                              // 7
+    p1.hgetall(treasuryBuyFlowKey());                                 // 8
+    p1.hgetall(treasurySellFlowKey());                                // 9
+    const r1 = await p1.exec();
+    if (!r1) throw new AppError("INTERNAL", "Redis pipeline failed");
+
+    const meta    = (r1[0]?.[1] as Record<string, string>) ?? {};
+    const bankGoldRaw = r1[1]?.[1] as string | null;
+    const bankItemsRaw = (r1[2]?.[1] as Record<string, string>) ?? {};
+    const shieldRaw   = r1[3]?.[1] as string | null;
+    const idolRaw     = (r1[4]?.[1] as Record<string, string>) ?? {};
+    const memberIds   = (r1[5]?.[1] as string[]) ?? [];
+    const contribItemsRaw = (r1[6]?.[1] as Record<string, string>) ?? {};
+    const sellPricesRaw   = (r1[7]?.[1] as Record<string, string>) ?? {};
+    const buyFlowRaw      = (r1[8]?.[1] as Record<string, string>) ?? {};
+    const sellFlowRaw     = (r1[9]?.[1] as Record<string, string>) ?? {};
+
+    if (!meta.id) throw new AppError("NO_SUCH_SYNDICATE", "Syndicate not found");
+
+    // ── Pipeline 2: per-member roles, seen, levels ────────────────────────
+    const p2 = this.redis.multi();
+    if (memberIds.length > 0) {
+      p2.hmget(syndicateMemberRolesKey(syndicateId), ...memberIds);     // 0
+      p2.hmget(syndicateMemberSeenKey(syndicateId), ...memberIds);      // 1
+    }
+    for (const uid of memberIds) {
+      p2.hget(userLevelKey(uid), "level");                              // 2..N
+    }
+    const r2 = await p2.exec();
+
+    const rolesArr = memberIds.length > 0
+      ? (r2?.[0]?.[1] as (string | null)[]) ?? []
+      : [];
+    const seenArr = memberIds.length > 0
+      ? (r2?.[1]?.[1] as (string | null)[]) ?? []
+      : [];
+    const levelOffset = memberIds.length > 0 ? 2 : 0;
+
+    // ── Build member list ─────────────────────────────────────────────────
+    let onlineCount = 0;
+    const members: DashboardMember[] = memberIds.map((uid, i) => {
+      const role = (rolesArr[i] ?? "member") as DashboardMember["role"];
+      const lastSeenAtMs = toInt(seenArr[i], 0);
+      const levelRaw = r2?.[levelOffset + i]?.[1];
+      const level = toInt(levelRaw, 1) || 1;
+      const online = now - lastSeenAtMs < ONLINE_THRESHOLD_MS;
+      if (online) onlineCount++;
+      return { userId: uid, role, level, lastSeenAtMs, online };
+    });
+
+    // ── Parse bank items ──────────────────────────────────────────────────
+    const bankItems: Record<string, number> = {};
+    for (const [k, v] of Object.entries(bankItemsRaw)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) bankItems[k] = Math.floor(n);
+    }
+
+    // ── Parse contribution items into per-item-per-user totals ────────────
+    // contribItemsRaw keys are "userId|itemId" -> qty
+    const contribByItem: Record<string, Record<string, number>> = {};
+    for (const [k, v] of Object.entries(contribItemsRaw)) {
+      const sepIdx = k.indexOf("|");
+      if (sepIdx < 1) continue;
+      const uid = k.slice(0, sepIdx);
+      const itemId = k.slice(sepIdx + 1);
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      const qty = Math.floor(n);
+      if (!contribByItem[itemId]) contribByItem[itemId] = {};
+      contribByItem[itemId]![uid] = (contribByItem[itemId]![uid] ?? 0) + qty;
+    }
+
+    // ── Build commodity stats ─────────────────────────────────────────────
+    const commodities: CommodityStat[] = [];
+    for (const [itemId, quantity] of Object.entries(bankItems)) {
+      const sellPriceMicro = toInt(sellPricesRaw[itemId], 0)
+        || Math.max(1, Math.round(resolveBaseMicro(itemId) * SPREAD_SELL_FACTOR));
+      const sellPriceGold = Math.floor((sellPriceMicro * quantity) / PRICE_MICRO_PER_GOLD);
+      const monopolyPct = Math.min(100, (quantity / SCARCITY_TOTAL_UNITS) * 100);
+
+      // Crash %: simulate dumping all bankQty into the sell flow
+      const buyFlow = Number(buyFlowRaw[itemId]) || 0;
+      const sellFlow = Number(sellFlowRaw[itemId]) || 0;
+      const curDemand = Math.min(PRICE_DEMAND_CLAMP[1],
+        Math.max(PRICE_DEMAND_CLAMP[0], (buyFlow + 1) / (sellFlow + 1)));
+      const curCirc = buyFlow + sellFlow;
+      const curScarcity = Math.min(PRICE_SCARCITY_CLAMP[1],
+        Math.max(PRICE_SCARCITY_CLAMP[0], SCARCITY_TOTAL_UNITS / Math.max(1, curCirc)));
+      const newSellFlow = sellFlow + quantity;
+      const newDemand = Math.min(PRICE_DEMAND_CLAMP[1],
+        Math.max(PRICE_DEMAND_CLAMP[0], (buyFlow + 1) / (newSellFlow + 1)));
+      const newCirc = buyFlow + newSellFlow;
+      const newScarcity = Math.min(PRICE_SCARCITY_CLAMP[1],
+        Math.max(PRICE_SCARCITY_CLAMP[0], SCARCITY_TOTAL_UNITS / Math.max(1, newCirc)));
+      const curFactor = curDemand * curScarcity;
+      const newFactor = newDemand * newScarcity;
+      const crashPct = curFactor > 0
+        ? Math.max(0, Math.min(100, ((curFactor - newFactor) / curFactor) * 100))
+        : 0;
+
+      // Member share percentages for this commodity
+      const itemContribs = contribByItem[itemId] ?? {};
+      const totalContrib = Object.values(itemContribs).reduce((s, v) => s + v, 0);
+      const memberShares: Record<string, number> = {};
+      if (totalContrib > 0) {
+        for (const [uid, qty] of Object.entries(itemContribs)) {
+          memberShares[uid] = Math.round((qty / totalContrib) * 10000) / 100;
+        }
+      }
+
+      commodities.push({
+        itemId,
+        quantity,
+        sellPriceMicro,
+        sellPriceGold,
+        monopolyPct: Math.round(monopolyPct * 100) / 100,
+        crashPct: Math.round(crashPct * 100) / 100,
+        memberShares,
+      });
+    }
+
+    // ── Parse boost info ──────────────────────────────────────────────────
+    const shieldExpiresAtMs = toInt(shieldRaw, 0);
+    const idolLevel = toInt(idolRaw.level, 0);
+    const idolStatusRaw = idolRaw.status ?? "none";
+    const idolStatus = (idolStatusRaw === "blessed" || idolStatusRaw === "punished")
+      ? idolStatusRaw : "none" as const;
+    const blessedUntilMs = toInt(idolRaw.blessedUntilMs, 0);
+    const punishedUntilMs = toInt(idolRaw.punishedUntilMs, 0);
+
+    const totalGold = toInt(bankGoldRaw, 0);
+
+    return {
+      name: meta.name ?? "",
+      emblemId: meta.emblemId ?? "emblem:default",
+      activeBoost: { shieldExpiresAtMs, idolLevel, idolStatus, blessedUntilMs, punishedUntilMs },
+      totalGold,
+      totalMembers: memberIds.length,
+      onlineCount,
+      members,
+      commodities,
+    };
   }
 
   async touchPresence(userId: string): Promise<void> {

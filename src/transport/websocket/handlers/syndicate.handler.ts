@@ -304,3 +304,35 @@ export async function handleViewMemberContribution(
     handleErr(ws, userId, e, "view member contribution failed");
   }
 }
+
+export async function handleSyndicateDashboard(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.dashboard(userId, payload);
+    send(ws, { type: "SYNDICATE_DASHBOARD_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "syndicate dashboard failed");
+  }
+}
+
+export async function handleSyndicateBankSell(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.bankSell(userId, payload);
+    userActions.log(userId, "SYNDICATE_BANK_SELL", payload);
+    send(ws, { type: "SYNDICATE_BANK_SELL_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "syndicate bank sell failed");
+  }
+}

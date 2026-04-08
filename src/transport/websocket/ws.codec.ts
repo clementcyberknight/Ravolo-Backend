@@ -67,6 +67,8 @@ function normalizeInbound(o: unknown): WsInboundMessage | null {
     type === "VIEW_COMMODITY_BANK" ||
     type === "VIEW_MEMBER_CONTRIBUTION" ||
     type === "VIEW_LEADERBOARD" ||
+    type === "SYNDICATE_DASHBOARD" ||
+    type === "SYNDICATE_BANK_SELL" ||
     type === "GET_GAME_STATE"
   ) {
     return { type, payload: rec.payload } as WsInboundMessage;

@@ -75,6 +75,9 @@ export const MAX_SYNDICATE_MEMBERS = 25;
 /** Minimum player level required to create a syndicate. */
 export const MIN_SYNDICATE_CREATE_LEVEL = 1;
 
+/** Threshold (ms) for considering a syndicate member "online". */
+export const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
+
 /** Idol request scheduler tick interval (ms). Every 5 minutes. */
 export const IDOL_TICK_MS = 5 * 60 * 1000;
 

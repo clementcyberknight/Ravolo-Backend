@@ -42,6 +42,8 @@ import {
   handleViewMemberContribution,
   handleViewSyndicate,
   handleViewSyndicateMember,
+  handleSyndicateBankSell,
+  handleSyndicateDashboard,
 } from "./handlers/syndicate.handler.js";
 import { parseWsInbound, sendGameMessage } from "./ws.codec.js";
 import { serverNowMs } from "../../shared/utils/time.js";
@@ -168,6 +170,12 @@ export async function dispatchWsMessage(
       return;
     case "VIEW_MEMBER_CONTRIBUTION":
       await handleViewMemberContribution(ws, msg.payload, ctx.syndicates);
+      return;
+    case "SYNDICATE_DASHBOARD":
+      await handleSyndicateDashboard(ws, msg.payload, ctx.syndicates);
+      return;
+    case "SYNDICATE_BANK_SELL":
+      await handleSyndicateBankSell(ws, msg.payload, ctx.syndicates, ctx.userActions);
       return;
     case "VIEW_LEADERBOARD":
       await handleViewLeaderboard(ws, msg.payload, ctx);

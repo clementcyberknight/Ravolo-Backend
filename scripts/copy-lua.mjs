@@ -32,6 +32,7 @@ for (const name of [
   "syndicateAttack.lua",
   "syndicateIdolContribute.lua",
   "syndicateLeaveOrDisband.lua",
+  "syndicateBankSell.lua",
   "decay.lua",
   "redeemRefreshToken.lua",
 ]) {

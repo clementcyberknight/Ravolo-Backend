@@ -92,3 +92,73 @@ export const IDOL_PUNISH_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Portion of syndicate bank gold removed on idol punishment (basis points: 3000 = 30%). */
 export const IDOL_PUNISH_BANK_BPS = 3000;
+
+// ── Syndicate War ──────────────────────────────────────────────────────
+
+/** War cycle total duration (ms). 6 hours. */
+export const WAR_CYCLE_DURATION_MS = 6 * 60 * 60 * 1000;
+/** Prep phase duration (ms). 1 hour. */
+export const WAR_PREP_DURATION_MS = 1 * 60 * 60 * 1000;
+/** Battle phase duration (ms). 4 hours. */
+export const WAR_BATTLE_DURATION_MS = 4 * 60 * 60 * 1000;
+/** Cooldown phase duration (ms). 30 minutes. */
+export const WAR_COOLDOWN_DURATION_MS = 30 * 60 * 1000;
+/** Settlement phase duration (ms). 30 minutes. */
+export const WAR_SETTLEMENT_DURATION_MS = 30 * 60 * 1000;
+/** Infamy matchmaking bracket tolerance (±10%). */
+export const WAR_INFAMY_BRACKET_PCT = 10;
+/** Starting Infamy for new syndicates. */
+export const WAR_STARTING_INFAMY = 1000;
+/** Maximum attacks per member per war. */
+export const WAR_MAX_ATTACKS_PER_MEMBER = 2;
+/** Underdog Infamy steal range (basis points). */
+export const WAR_UNDERDOG_STEAL_MIN_BPS = 2500;
+export const WAR_UNDERDOG_STEAL_MAX_BPS = 4000;
+/** Favourite Infamy gain (basis points). */
+export const WAR_FAVOURITE_GAIN_BPS = 500;
+/** War declaration cooldown (ms). 1 hour after last war ends. */
+export const WAR_DECLARE_COOLDOWN_MS = 1 * 60 * 60 * 1000;
+/** War scheduler tick (ms). Every 30 seconds. */
+export const WAR_TICK_MS = 30_000;
+/** Bracket widening step (percentage points) per failed match tick. */
+export const WAR_BRACKET_WIDEN_STEP_PCT = 5;
+/** Maximum bracket tolerance (percentage). */
+export const WAR_BRACKET_MAX_PCT = 30;
+
+// ── Star Thresholds (basis points 0–10000) ─────────────────────────────
+export const WAR_STAR_1_DESTRUCTION_BPS = 5000;
+export const WAR_STAR_2_DESTRUCTION_BPS = 7500;
+export const WAR_STAR_3_DESTRUCTION_BPS = 10000;
+
+// ── Troop Stats ────────────────────────────────────────────────────────
+export const TROOP_BASE_POWER: Record<string, number> = {
+  worker: 10,
+  tractor: 25,
+  scarecrow_breaker: 15,
+  crop_duster: 20,
+  siege_harvester: 50,
+};
+
+// ── War Shield Types ───────────────────────────────────────────────────
+export const WAR_SHIELD_CONFIG: Record<
+  string,
+  { gold: number; durationMs: number }
+> = {
+  harvest_dome: { gold: 500, durationMs: 4 * 60 * 60 * 1000 },
+  gold_vault_lock: { gold: 800, durationMs: 6 * 60 * 60 * 1000 },
+  militia_surge: { gold: 1200, durationMs: 2 * 60 * 60 * 1000 },
+  crop_decoy: { gold: 600, durationMs: 3 * 60 * 60 * 1000 },
+  ceasefire: { gold: 2000, durationMs: 8 * 60 * 60 * 1000 },
+};
+/** Militia Surge defense bonus (basis points: 5000 = +50%). */
+export const SHIELD_MILITIA_SURGE_DEF_BONUS_BPS = 5000;
+/** Crop Decoy loot reduction (basis points: 7500 = 75% less loot). */
+export const SHIELD_CROP_DECOY_LOOT_REDUCE_BPS = 7500;
+
+// ── Troop Upgrades ─────────────────────────────────────────────────────
+/** Maximum troop upgrade level (1 = base, 5 = max). */
+export const TROOP_MAX_LEVEL = 5;
+/** Gold cost per upgrade level (index 0 = cost to go from lvl 1→2, etc.). */
+export const TROOP_UPGRADE_COSTS: number[] = [500, 1200, 2500, 5000];
+/** Power multiplier per level in basis points (10000 = 1.0×). Index 0 = level 1. */
+export const TROOP_LEVEL_POWER_BPS: number[] = [10000, 12500, 15000, 20000, 25000];

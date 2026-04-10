@@ -195,3 +195,126 @@ export type SyndicateDashboardView = {
   commodities: CommodityStat[];
   joinRequests?: { userId: string; username: string; requestedAtMs: number; level: number }[];
 };
+
+// ── Syndicate War Types ────────────────────────────────────────────────
+
+export type WarPhase = "declaration" | "prep" | "battle" | "cooldown" | "settlement" | "ended";
+
+export type ShieldType = "harvest_dome" | "gold_vault_lock" | "militia_surge" | "crop_decoy" | "ceasefire";
+
+export type ActiveShield = {
+  type: ShieldType;
+  expiresAtMs: number;
+};
+
+export type TroopType = "worker" | "tractor" | "scarecrow_breaker" | "crop_duster" | "siege_harvester";
+
+export type TroopDeployment = {
+  type: TroopType;
+  count: number;
+};
+
+export type WarState = {
+  warId: string;
+  attackerSyndicateId: string;
+  defenderSyndicateId: string;
+  phase: WarPhase;
+  declaredAtMs: number;
+  prepStartsAtMs: number;
+  battleStartsAtMs: number;
+  cooldownStartsAtMs: number;
+  settlementStartsAtMs: number;
+  endsAtMs: number;
+  attackerInfamy: number;
+  defenderInfamy: number;
+  attackerStars: number;
+  defenderStars: number;
+  attackerDestructionBps: number;
+  defenderDestructionBps: number;
+  settled: boolean;
+};
+
+export type WarAttackRecord = {
+  attackId: string;
+  attackerUserId: string;
+  attackerSyndicateId: string;
+  defenderSyndicateId: string;
+  troops: TroopDeployment[];
+  stars: number;
+  destructionBps: number;
+  lootGold: number;
+  lootItems: Record<string, number>;
+  timestampMs: number;
+};
+
+export type DeclareWarCommand = {
+  requestId: string;
+  syndicateId: string;
+};
+
+export type WarAttackCommand = {
+  requestId: string;
+  warId: string;
+  targetSyndicateId: string;
+  troops: TroopDeployment[];
+};
+
+export type BuyWarShieldCommand = {
+  requestId: string;
+  syndicateId: string;
+  shieldType: ShieldType;
+};
+
+export type ViewWarCommand = {
+  warId: string;
+};
+
+export type ViewWarHistoryCommand = {
+  syndicateId: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export type WarView = {
+  warId: string;
+  attackerSyndicateId: string;
+  defenderSyndicateId: string;
+  attackerName: string;
+  defenderName: string;
+  phase: WarPhase;
+  attackerInfamy: number;
+  defenderInfamy: number;
+  attackerStars: number;
+  defenderStars: number;
+  attackerDestructionBps: number;
+  defenderDestructionBps: number;
+  timeRemainingMs: number;
+  attacks: WarAttackRecord[];
+  myAttacksRemaining: number;
+};
+
+export type WarMatchmakingResult = {
+  queued: true;
+  syndicateId: string;
+  infamy: number;
+};
+
+export type UpgradeTroopCommand = {
+  requestId: string;
+  syndicateId: string;
+  troopType: TroopType;
+};
+
+export type TroopUpgradeResult = {
+  troopType: TroopType;
+  newLevel: number;
+  goldSpent: number;
+};
+
+export type TroopLevelsView = {
+  worker: number;
+  tractor: number;
+  scarecrow_breaker: number;
+  crop_duster: number;
+  siege_harvester: number;
+};

@@ -42,6 +42,14 @@ export type WsInboundMessage =
   | { type: "GET_GAME_STATE"; payload?: unknown }
   | { type: "GET_PLOT_STATE"; payload?: unknown }
   | { type: "GET_GOLD_BALANCE"; payload?: unknown }
+  | { type: "DECLARE_WAR"; payload: unknown }
+  | { type: "WAR_ATTACK"; payload: unknown }
+  | { type: "BUY_WAR_SHIELD"; payload: unknown }
+  | { type: "VIEW_WAR"; payload: unknown }
+  | { type: "VIEW_ACTIVE_WAR"; payload?: unknown }
+  | { type: "VIEW_WAR_HISTORY"; payload: unknown }
+  | { type: "UPGRADE_TROOP"; payload: unknown }
+  | { type: "VIEW_TROOP_LEVELS"; payload: unknown }
   | { type: "PING"; payload?: unknown };
 
 export type WsOutboundMessage =
@@ -139,5 +147,13 @@ export type WsOutboundMessage =
       data: { userId: string; gold: number; serverNowMs: number };
     }
   | { type: "SYNDICATE_IDOL_EVENT"; data: unknown }
+  | { type: "DECLARE_WAR_OK"; data: unknown }
+  | { type: "WAR_ATTACK_OK"; data: unknown }
+  | { type: "BUY_WAR_SHIELD_OK"; data: unknown }
+  | { type: "VIEW_WAR_OK"; data: unknown }
+  | { type: "VIEW_ACTIVE_WAR_OK"; data: unknown }
+  | { type: "VIEW_WAR_HISTORY_OK"; data: unknown }
+  | { type: "UPGRADE_TROOP_OK"; data: unknown }
+  | { type: "VIEW_TROOP_LEVELS_OK"; data: unknown }
   | { type: "ERROR"; code: string; message: string; details?: unknown }
   | { type: "PONG"; serverNowMs: number; clientTs?: unknown };

@@ -58,6 +58,13 @@ let syndicateLeaveOrDisbandSha: string | null = null;
 let syndicateBankSellSha: string | null = null;
 let decaySha: string | null = null;
 let redeemRefreshTokenSha: string | null = null;
+let warDeclareSha: string | null = null;
+let warMatchSha: string | null = null;
+let warAttackSha: string | null = null;
+let warPhaseAdvanceSha: string | null = null;
+let warSettleSha: string | null = null;
+let warBuyShieldSha: string | null = null;
+let upgradeTroopSha: string | null = null;
 
 export async function loadRedisScripts(redis: Redis): Promise<void> {
   const plantSrc = readFileSync(resolveLuaFile("plant.lua"), "utf8");
@@ -204,6 +211,22 @@ export async function loadRedisScripts(redis: Redis): Promise<void> {
     "LOAD",
     redeemRefreshTokenSrc,
   )) as string;
+
+  // ── War scripts ──
+  const warDeclareSrc = readFileSync(resolveLuaFile("syndicateWarDeclare.lua"), "utf8");
+  const warMatchSrc = readFileSync(resolveLuaFile("syndicateWarMatch.lua"), "utf8");
+  const warAttackSrc = readFileSync(resolveLuaFile("syndicateWarAttack.lua"), "utf8");
+  const warPhaseAdvanceSrc = readFileSync(resolveLuaFile("syndicateWarPhaseAdvance.lua"), "utf8");
+  const warSettleSrc = readFileSync(resolveLuaFile("syndicateWarSettle.lua"), "utf8");
+  const warBuyShieldSrc = readFileSync(resolveLuaFile("syndicateWarBuyShield.lua"), "utf8");
+  warDeclareSha = (await redis.script("LOAD", warDeclareSrc)) as string;
+  warMatchSha = (await redis.script("LOAD", warMatchSrc)) as string;
+  warAttackSha = (await redis.script("LOAD", warAttackSrc)) as string;
+  warPhaseAdvanceSha = (await redis.script("LOAD", warPhaseAdvanceSrc)) as string;
+  warSettleSha = (await redis.script("LOAD", warSettleSrc)) as string;
+  warBuyShieldSha = (await redis.script("LOAD", warBuyShieldSrc)) as string;
+  const upgradeTroopSrc = readFileSync(resolveLuaFile("syndicateUpgradeTroop.lua"), "utf8");
+  upgradeTroopSha = (await redis.script("LOAD", upgradeTroopSrc)) as string;
 }
 
 export function getRedeemRefreshTokenSha(): string {
@@ -1705,6 +1728,412 @@ export async function redisDecay(
     if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
       await loadRedisScripts(redis);
       return redisDecay(redis, plotKey, currentTimeMs, maxDecayMs);
+    }
+    throw e;
+  }
+}
+
+// ── War Command Wrappers ───────────────────────────────────────────────
+
+export type WarDeclareResult = { syndicateId: string; infamy: number };
+
+function parseWarDeclarePayload(raw: string): WarDeclareResult {
+  const parts = raw.split("|");
+  if (parts[0] !== "OK" || parts.length !== 3) {
+    throw new Error(`Invalid war declare payload: ${raw}`);
+  }
+  return { syndicateId: parts[1]!, infamy: Number(parts[2]) };
+}
+
+export async function redisWarDeclare(
+  redis: Redis,
+  keys: {
+    userSyndicateKey: string;
+    metaKey: string;
+    activeWarKey: string;
+    cooldownKey: string;
+    matchmakingKey: string;
+    infamyKey: string;
+    idempKey: string;
+    rolesKey: string;
+    warShieldsKey: string;
+  },
+  args: {
+    userId: string;
+    syndicateId: string;
+    nowMs: number;
+    idempTtlSec: number;
+    startingInfamy: number;
+  },
+): Promise<WarDeclareResult> {
+  if (!warDeclareSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      warDeclareSha,
+      9,
+      keys.userSyndicateKey,
+      keys.metaKey,
+      keys.activeWarKey,
+      keys.cooldownKey,
+      keys.matchmakingKey,
+      keys.infamyKey,
+      keys.idempKey,
+      keys.rolesKey,
+      keys.warShieldsKey,
+      args.userId,
+      args.syndicateId,
+      String(args.nowMs),
+      String(args.idempTtlSec),
+      String(args.startingInfamy),
+    )) as string;
+    return parseWarDeclarePayload(res);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisWarDeclare(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export async function redisWarMatch(
+  redis: Redis,
+  keys: {
+    matchmakingKey: string;
+    warSeqKey: string;
+    activeWarsKey: string;
+  },
+  args: {
+    bracketPct: number;
+    nowMs: number;
+    prepDurationMs: number;
+    battleDurationMs: number;
+    cooldownDurationMs: number;
+    settlementDurationMs: number;
+  },
+): Promise<string> {
+  if (!warMatchSha) throw new Error("Redis scripts not loaded");
+  try {
+    return (await redis.evalsha(
+      warMatchSha,
+      3,
+      keys.matchmakingKey,
+      keys.warSeqKey,
+      keys.activeWarsKey,
+      String(args.bracketPct),
+      String(args.nowMs),
+      String(args.prepDurationMs),
+      String(args.battleDurationMs),
+      String(args.cooldownDurationMs),
+      String(args.settlementDurationMs),
+    )) as string;
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisWarMatch(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export type RedisWarAttackResult = {
+  attackId: string;
+  stars: number;
+  destructionBps: number;
+  lootGold: number;
+  lootItems: string;
+};
+
+function parseWarAttackPayload(raw: string): RedisWarAttackResult {
+  const parts = raw.split("|");
+  if (parts[0] !== "OK" || parts.length < 5) {
+    throw new Error(`Invalid war attack payload: ${raw}`);
+  }
+  return {
+    attackId: parts[1]!,
+    stars: Number(parts[2]),
+    destructionBps: Number(parts[3]),
+    lootGold: Number(parts[4]),
+    lootItems: parts[5] ?? "",
+  };
+}
+
+export async function redisWarAttack(
+  redis: Redis,
+  keys: {
+    warStateKey: string;
+    attackCountKey: string;
+    attackLogKey: string;
+    attackerBankGoldKey: string;
+    defenderBankGoldKey: string;
+    defenderBankItemsKey: string;
+    attackerBankItemsKey: string;
+    userSyndicateKey: string;
+    defenderShieldsKey: string;
+    defenderDefPowerKey: string;
+    idempKey: string;
+  },
+  args: {
+    userId: string;
+    warId: string;
+    targetSyndicateId: string;
+    troopsCsv: string;
+    nowMs: number;
+    maxAttacks: number;
+    idempTtlSec: number;
+    troopPowerCsv: string;
+    star1Bps: number;
+    star2Bps: number;
+    star3Bps: number;
+    militiaSurgeBonusBps: number;
+    cropDecoyReduceBps: number;
+  },
+): Promise<RedisWarAttackResult> {
+  if (!warAttackSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      warAttackSha,
+      11,
+      keys.warStateKey,
+      keys.attackCountKey,
+      keys.attackLogKey,
+      keys.attackerBankGoldKey,
+      keys.defenderBankGoldKey,
+      keys.defenderBankItemsKey,
+      keys.attackerBankItemsKey,
+      keys.userSyndicateKey,
+      keys.defenderShieldsKey,
+      keys.defenderDefPowerKey,
+      keys.idempKey,
+      args.userId,
+      args.warId,
+      args.targetSyndicateId,
+      args.troopsCsv,
+      String(args.nowMs),
+      String(args.maxAttacks),
+      String(args.idempTtlSec),
+      args.troopPowerCsv,
+      String(args.star1Bps),
+      String(args.star2Bps),
+      String(args.star3Bps),
+      String(args.militiaSurgeBonusBps),
+      String(args.cropDecoyReduceBps),
+    )) as string;
+    return parseWarAttackPayload(res);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisWarAttack(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export async function redisWarPhaseAdvance(
+  redis: Redis,
+  warStateKeyStr: string,
+  nowMs: number,
+): Promise<string> {
+  if (!warPhaseAdvanceSha) throw new Error("Redis scripts not loaded");
+  try {
+    return (await redis.evalsha(
+      warPhaseAdvanceSha,
+      1,
+      warStateKeyStr,
+      String(nowMs),
+    )) as string;
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisWarPhaseAdvance(redis, warStateKeyStr, nowMs);
+    }
+    throw e;
+  }
+}
+
+export type WarSettleResult = {
+  winner: string;
+  infamyDelta: number;
+  winnerSid: string;
+  loserSid: string;
+};
+
+function parseWarSettlePayload(raw: string): WarSettleResult | null {
+  if (raw === "ALREADY_SETTLED" || raw === "NOT_READY") return null;
+  const parts = raw.split("|");
+  if (parts[0] !== "SETTLED" || parts.length !== 5) return null;
+  return {
+    winner: parts[1]!,
+    infamyDelta: Number(parts[2]),
+    winnerSid: parts[3]!,
+    loserSid: parts[4]!,
+  };
+}
+
+export async function redisWarSettle(
+  redis: Redis,
+  keys: {
+    warStateKey: string;
+    infamyKey: string;
+    attackerActiveWarKey: string;
+    defenderActiveWarKey: string;
+    attackerHistoryKey: string;
+    defenderHistoryKey: string;
+    attackerCooldownKey: string;
+    defenderCooldownKey: string;
+    activeWarsKey: string;
+  },
+  args: {
+    warId: string;
+    nowMs: number;
+    cooldownDurationMs: number;
+    underdogStealMinBps: number;
+    underdogStealMaxBps: number;
+    favouriteGainBps: number;
+    warTtlSec: number;
+  },
+): Promise<WarSettleResult | null> {
+  if (!warSettleSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      warSettleSha,
+      9,
+      keys.warStateKey,
+      keys.infamyKey,
+      keys.attackerActiveWarKey,
+      keys.defenderActiveWarKey,
+      keys.attackerHistoryKey,
+      keys.defenderHistoryKey,
+      keys.attackerCooldownKey,
+      keys.defenderCooldownKey,
+      keys.activeWarsKey,
+      args.warId,
+      String(args.nowMs),
+      String(args.cooldownDurationMs),
+      String(args.underdogStealMinBps),
+      String(args.underdogStealMaxBps),
+      String(args.favouriteGainBps),
+      String(args.warTtlSec),
+    )) as string;
+    return parseWarSettlePayload(res);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisWarSettle(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export type WarBuyShieldResult = { shieldType: string; expiresAtMs: number };
+
+function parseWarBuyShieldPayload(raw: string): WarBuyShieldResult {
+  const parts = raw.split("|");
+  if (parts[0] !== "OK" || parts.length !== 3) {
+    throw new Error(`Invalid war buy shield payload: ${raw}`);
+  }
+  return { shieldType: parts[1]!, expiresAtMs: Number(parts[2]) };
+}
+
+export async function redisWarBuyShield(
+  redis: Redis,
+  keys: {
+    userSyndicateKey: string;
+    rolesKey: string;
+    bankGoldKey: string;
+    warShieldsKey: string;
+    idempKey: string;
+  },
+  args: {
+    userId: string;
+    syndicateId: string;
+    shieldType: string;
+    goldCost: number;
+    durationMs: number;
+    nowMs: number;
+    idempTtlSec: number;
+  },
+): Promise<WarBuyShieldResult> {
+  if (!warBuyShieldSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      warBuyShieldSha,
+      5,
+      keys.userSyndicateKey,
+      keys.rolesKey,
+      keys.bankGoldKey,
+      keys.warShieldsKey,
+      keys.idempKey,
+      args.userId,
+      args.syndicateId,
+      args.shieldType,
+      String(args.goldCost),
+      String(args.durationMs),
+      String(args.nowMs),
+      String(args.idempTtlSec),
+    )) as string;
+    return parseWarBuyShieldPayload(res);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisWarBuyShield(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+// ── Troop Upgrade Wrapper ──────────────────────────────────────────────
+
+export type UpgradeTroopResult = { troopType: string; newLevel: number; goldSpent: number };
+
+function parseUpgradeTroopPayload(raw: string): UpgradeTroopResult {
+  const parts = raw.split("|");
+  if (parts[0] !== "OK" || parts.length !== 4) {
+    throw new Error(`Invalid upgrade troop payload: ${raw}`);
+  }
+  return { troopType: parts[1]!, newLevel: Number(parts[2]), goldSpent: Number(parts[3]) };
+}
+
+export async function redisUpgradeTroop(
+  redis: Redis,
+  keys: {
+    userSyndicateKey: string;
+    rolesKey: string;
+    bankGoldKey: string;
+    troopLevelsKey: string;
+    idempKey: string;
+  },
+  args: {
+    userId: string;
+    syndicateId: string;
+    troopType: string;
+    goldCost: number;
+    maxLevel: number;
+    idempTtlSec: number;
+  },
+): Promise<UpgradeTroopResult> {
+  if (!upgradeTroopSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      upgradeTroopSha,
+      5,
+      keys.userSyndicateKey,
+      keys.rolesKey,
+      keys.bankGoldKey,
+      keys.troopLevelsKey,
+      keys.idempKey,
+      args.userId,
+      args.syndicateId,
+      args.troopType,
+      String(args.goldCost),
+      String(args.maxLevel),
+      String(args.idempTtlSec),
+    )) as string;
+    return parseUpgradeTroopPayload(res);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisUpgradeTroop(redis, keys, args);
     }
     throw e;
   }

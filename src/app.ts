@@ -15,6 +15,7 @@ import { MarketService } from "./modules/market/market.service.js";
 import { PlantingService } from "./modules/planting/planting.service.js";
 import { ProfileService } from "./modules/profile/profile.service.js";
 import { SyndicateService } from "./modules/syndicate/syndicate.service.js";
+import { WarService } from "./modules/syndicate/war.service.js";
 import { UserActionService } from "./modules/user-actions/userAction.service.js";
 import {
   broadcastToAll,
@@ -62,6 +63,7 @@ export async function startApp(): Promise<AppInstance> {
   const userActions = new UserActionService(redis);
   const stopUserActionsWorker = startUserActionsFlushWorker(redis);
   const syndicates = new SyndicateService(redis);
+  const wars = new WarService(redis);
   const leaderboards = new LeaderboardService(redis);
 
   const ctx: WsAppContext = {
@@ -75,6 +77,7 @@ export async function startApp(): Promise<AppInstance> {
     crafting,
     userActions,
     syndicates,
+    wars,
     leaderboards,
     auth,
     profile,

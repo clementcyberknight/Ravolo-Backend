@@ -10,6 +10,7 @@ import type { MarketService } from "../../modules/market/market.service.js";
 import type { PlantingService } from "../../modules/planting/planting.service.js";
 import type { UserActionService } from "../../modules/user-actions/userAction.service.js";
 import type { SyndicateService } from "../../modules/syndicate/syndicate.service.js";
+import type { WarService } from "../../modules/syndicate/war.service.js";
 import {
   handleAnimalFeed,
   handleAnimalHarvest,
@@ -54,6 +55,16 @@ import {
   handleSyndicateBankSell,
   handleSyndicateDashboard,
 } from "./handlers/syndicate.handler.js";
+import {
+  handleDeclareWar,
+  handleWarAttack,
+  handleBuyWarShield,
+  handleViewWar,
+  handleViewActiveWar,
+  handleViewWarHistory,
+  handleUpgradeTroop,
+  handleViewTroopLevels,
+} from "./handlers/war.handler.js";
 import { parseWsInbound, sendGameMessage } from "./ws.codec.js";
 import { serverNowMs } from "../../shared/utils/time.js";
 import type { WsUserData } from "./ws.types.js";
@@ -69,6 +80,7 @@ export type WsGameContext = {
   crafting: CraftingService;
   userActions: UserActionService;
   syndicates: SyndicateService;
+  wars: WarService;
   leaderboards: LeaderboardService;
 };
 
@@ -235,6 +247,30 @@ export async function dispatchWsMessage(
       return;
     case "GET_GOLD_BALANCE":
       await handleGetGoldBalance(ws, msg.payload, ctx.market);
+      return;
+    case "DECLARE_WAR":
+      await handleDeclareWar(ws, msg.payload, ctx.wars, ctx.userActions);
+      return;
+    case "WAR_ATTACK":
+      await handleWarAttack(ws, msg.payload, ctx.wars, ctx.userActions);
+      return;
+    case "BUY_WAR_SHIELD":
+      await handleBuyWarShield(ws, msg.payload, ctx.wars, ctx.userActions);
+      return;
+    case "VIEW_WAR":
+      await handleViewWar(ws, msg.payload, ctx.wars);
+      return;
+    case "VIEW_ACTIVE_WAR":
+      await handleViewActiveWar(ws, msg.payload, ctx.wars);
+      return;
+    case "VIEW_WAR_HISTORY":
+      await handleViewWarHistory(ws, msg.payload, ctx.wars);
+      return;
+    case "UPGRADE_TROOP":
+      await handleUpgradeTroop(ws, msg.payload, ctx.wars, ctx.userActions);
+      return;
+    case "VIEW_TROOP_LEVELS":
+      await handleViewTroopLevels(ws, msg.payload, ctx.wars);
       return;
     default:
       logger.warn({ msg }, "unhandled ws message type");

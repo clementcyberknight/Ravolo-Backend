@@ -299,3 +299,70 @@ export function syndicateContributionItemsKey(syndicateId: string): string {
 export function syndicateTaxPenaltyKey(syndicateId: string): string {
   return `ravolo:syndicate:${syndicateId}:tax_penalty`;
 }
+
+// ── Syndicate War Keys ─────────────────────────────────────────────────
+
+/** Global Infamy ZSET: syndicateId → infamy score. */
+export function syndicateInfamyKey(): string {
+  return "ravolo:syndicate:infamy";
+}
+
+/** War state hash (all fields of a single war). */
+export function warStateKey(warId: string): string {
+  return `ravolo:war:${warId}`;
+}
+
+/** Current active war for a syndicate (STRING: warId). */
+export function syndicateActiveWarKey(syndicateId: string): string {
+  return `ravolo:syndicate:${syndicateId}:active_war`;
+}
+
+/** Matchmaking queue (SORTED SET: syndicateId → infamy). */
+export function warMatchmakingQueueKey(): string {
+  return "ravolo:war:matchmaking";
+}
+
+/** Per-user attack count within a war (HASH: userId → count). */
+export function warAttackCountKey(warId: string): string {
+  return `ravolo:war:${warId}:attack_counts`;
+}
+
+/** War attack log (LIST: attack records as pipe-delimited strings). */
+export function warAttackLogKey(warId: string): string {
+  return `ravolo:war:${warId}:attacks`;
+}
+
+/** War history per syndicate (SORTED SET: warId → endTimestamp). */
+export function syndicateWarHistoryKey(syndicateId: string): string {
+  return `ravolo:syndicate:${syndicateId}:war_history`;
+}
+
+/** War declaration cooldown (STRING: timestamp when cooldown expires). */
+export function syndicateWarCooldownKey(syndicateId: string): string {
+  return `ravolo:syndicate:${syndicateId}:war_cooldown`;
+}
+
+/** Active war shields (HASH: shieldType → expiresAtMs). */
+export function syndicateWarShieldsKey(syndicateId: string): string {
+  return `ravolo:syndicate:${syndicateId}:war_shields`;
+}
+
+/** Sequence counter for generating warIds. */
+export function warSeqKey(): string {
+  return "ravolo:war:seq";
+}
+
+/** Set of all active war IDs (for scheduler scanning). */
+export function activeWarsIndexKey(): string {
+  return "ravolo:war:active";
+}
+
+/** Syndicate defense power (STRING integer, derived from members/idol/level). */
+export function syndicateDefensePowerKey(syndicateId: string): string {
+  return `ravolo:syndicate:${syndicateId}:defense_power`;
+}
+
+/** Syndicate troop upgrade levels (HASH: troopType → level). */
+export function syndicateTroopLevelsKey(syndicateId: string): string {
+  return `ravolo:syndicate:${syndicateId}:troop_levels`;
+}

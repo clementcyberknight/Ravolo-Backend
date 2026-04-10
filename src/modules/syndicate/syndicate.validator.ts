@@ -129,3 +129,69 @@ export const bankSellSchema = z.object({
 export const syndicateDashboardSchema = z.object({
   syndicateId: z.string().min(1).max(64),
 });
+
+// ── War Validators ─────────────────────────────────────────────────────
+
+export const declareWarSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+});
+
+export const warAttackSchema = z.object({
+  requestId: requestIdSchema,
+  warId: z.string().min(1).max(128),
+  targetSyndicateId: z.string().min(1).max(64),
+  troops: z
+    .array(
+      z.object({
+        type: z.enum([
+          "worker",
+          "tractor",
+          "scarecrow_breaker",
+          "crop_duster",
+          "siege_harvester",
+        ]),
+        count: z.coerce.number().int().min(1).max(100),
+      }),
+    )
+    .min(1)
+    .max(5),
+});
+
+export const buyWarShieldSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  shieldType: z.enum([
+    "harvest_dome",
+    "gold_vault_lock",
+    "militia_surge",
+    "crop_decoy",
+    "ceasefire",
+  ]),
+});
+
+export const viewWarSchema = z.object({
+  warId: z.string().min(1).max(128),
+});
+
+export const viewWarHistorySchema = z.object({
+  syndicateId: z.string().min(1).max(64),
+  cursor: z.string().max(256).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export const upgradeTroopSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  troopType: z.enum([
+    "worker",
+    "tractor",
+    "scarecrow_breaker",
+    "crop_duster",
+    "siege_harvester",
+  ]),
+});
+
+export const viewTroopLevelsSchema = z.object({
+  syndicateId: z.string().min(1).max(64),
+});

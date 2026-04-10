@@ -51,6 +51,15 @@ export type AppErrorCode =
   | "MISSING_TOOL"
   | "NO_CRAFT"
   | "UNKNOWN_RECIPE"
+  | "NO_SUCH_WAR"
+  | "ALREADY_IN_WAR"
+  | "WAR_COOLDOWN"
+  | "CEASEFIRE_ACTIVE"
+  | "WAR_NOT_IN_BATTLE"
+  | "NOT_IN_WAR"
+  | "MAX_ATTACKS_REACHED"
+  | "SHIELD_ALREADY_ACTIVE"
+  | "MAX_TROOP_LEVEL"
   | "INTERNAL";
 
 export class AppError extends Error {

@@ -40,6 +40,13 @@ for (const name of [
   "syndicateBankSell.lua",
   "decay.lua",
   "redeemRefreshToken.lua",
+  "syndicateWarDeclare.lua",
+  "syndicateWarMatch.lua",
+  "syndicateWarAttack.lua",
+  "syndicateWarPhaseAdvance.lua",
+  "syndicateWarSettle.lua",
+  "syndicateWarBuyShield.lua",
+  "syndicateUpgradeTroop.lua",
 ]) {
   cpSync(join(srcDir, name), join(destDir, name));
 }

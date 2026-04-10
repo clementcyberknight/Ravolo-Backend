@@ -5,6 +5,7 @@ import { runPricingTick } from "../../workers/pricing.worker.js";
 import { runAiEventTick, setAiEventBroadcaster } from "../../workers/aiEvent.worker.js";
 import { runIdolRequestTick } from "../../workers/idolRequest.worker.js";
 import { runLeaderboardTick } from "../../workers/leaderboard.worker.js";
+import { runWarLifecycleTick } from "./jobs/war-lifecycle.job.js";
 
 // Schedules Configuration
 const SCHEDULES = {
@@ -13,6 +14,7 @@ const SCHEDULES = {
   IDOL_REQUEST: 5 * 60 * 1000,  // 5 minutes
   AI_EVENT: 60 * 1000,          // 60 seconds
   LEADERBOARD: 5 * 60 * 1000,   // 5 minutes 
+  WAR_LIFECYCLE: 30 * 1000,      // 30 seconds
 };
 
 export class SchedulerService {
@@ -44,6 +46,9 @@ export class SchedulerService {
 
     // 5. Leaderboard
     this.scheduleJob("Leaderboard", SCHEDULES.LEADERBOARD, () => runLeaderboardTick(this.redis));
+
+    // 6. War Lifecycle (matchmaking, phase advance, settlement)
+    this.scheduleJob("WarLifecycle", SCHEDULES.WAR_LIFECYCLE, () => runWarLifecycleTick(this.redis));
   }
 
   stopAll(): void {

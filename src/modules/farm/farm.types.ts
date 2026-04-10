@@ -19,3 +19,17 @@ export type GameStatusPlotsData = {
   loanCollateralValueGold: number;
   note: string;
 };
+
+/** Normalised plot row for GAME_STATE, GET_PLOT_STATE, etc. */
+export type PlotStateItem = {
+  plotId: number;
+  cropId: string | null;
+  plantedAtMs: number | null;
+  readyAtMs: number | null;
+  msUntilReady: number | null;
+  status: "empty" | "growing" | "ready" | "withered";
+  wither: boolean;
+  /** Present when a crop is planted (from plot hash). */
+  outputQty: number | null;
+  harvestItem: string | null;
+};

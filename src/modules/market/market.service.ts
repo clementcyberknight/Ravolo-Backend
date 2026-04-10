@@ -48,6 +48,7 @@ import {
   userSyndicateIdKey,
   syndicateTaxPenaltyKey,
 } from "../../infrastructure/redis/keys.js";
+import { getSyndicateIdolTradeMultipliers } from "../syndicate/syndicateIdol.effects.js";
 
 function isReplyError(err: unknown): err is { message: string } {
   return typeof err === "object" && err !== null && "message" in err;
@@ -183,12 +184,18 @@ export class MarketService {
 
     let goldPaid = sellPayoutGold(priceMicro, quantity);
 
-    // Apply wash trade tax penalty if caught
     const sid = await this.redis.get(userSyndicateIdKey(userId));
+    const now = serverNowMs();
     if (sid) {
-      const penalized = await this.redis.get(syndicateTaxPenaltyKey(sid));
-      if (penalized === "1") {
-        goldPaid = toSafeGold(goldPaid * 0.8); // 20% tax cut, always integer
+      const idol = await getSyndicateIdolTradeMultipliers(
+        this.redis,
+        sid,
+        now,
+      );
+      goldPaid = toSafeGold(goldPaid * idol.sellMult);
+      const washPenalized = await this.redis.get(syndicateTaxPenaltyKey(sid));
+      if (washPenalized === "1") {
+        goldPaid = toSafeGold(goldPaid * 0.8);
       }
     }
 
@@ -277,12 +284,18 @@ export class MarketService {
 
     let goldSpent = buyCostGold(priceMicro, quantity);
 
-    // Apply wash trade tax penalty if caught
     const sid = await this.redis.get(userSyndicateIdKey(userId));
+    const now = serverNowMs();
     if (sid) {
-      const penalized = await this.redis.get(syndicateTaxPenaltyKey(sid));
-      if (penalized === "1") {
-        goldSpent = toSafeGold(Math.ceil(goldSpent * 1.2)); // 20% increased cost, always integer
+      const idol = await getSyndicateIdolTradeMultipliers(
+        this.redis,
+        sid,
+        now,
+      );
+      goldSpent = toSafeGold(Math.ceil(goldSpent * idol.buyMult));
+      const washPenalized = await this.redis.get(syndicateTaxPenaltyKey(sid));
+      if (washPenalized === "1") {
+        goldSpent = toSafeGold(Math.ceil(goldSpent * 1.2));
       }
     }
 

@@ -50,6 +50,13 @@ export function harvestIdempotencyKey(userId: string, requestId: string): string
   return `ravolo:${userTag(userId)}:idemp:harvest:${requestId}`;
 }
 
+export function clearPlotWitherIdempotencyKey(
+  userId: string,
+  requestId: string,
+): string {
+  return `ravolo:${userTag(userId)}:idemp:clear_wither:${requestId}`;
+}
+
 export function sellIdempotencyKey(userId: string, requestId: string): string {
   return `ravolo:${userTag(userId)}:idemp:sell:${requestId}`;
 }

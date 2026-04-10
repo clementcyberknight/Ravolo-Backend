@@ -12,7 +12,7 @@ import {
   STARTER_PLOT_IDS,
   PRICE_MICRO_PER_GOLD,
   MAX_SYNDICATE_MEMBERS,
-  IDOL_PUNISH_GOLD,
+  IDOL_PUNISH_BANK_BPS,
 } from "../../config/constants.js";
 import {
   LOAN_LTV_NUMERATOR,
@@ -149,7 +149,8 @@ function buildCatalog() {
   const syndicates = {
     maxMembers: MAX_SYNDICATE_MEMBERS,
     creatorMinLevel: 13,
-    idolPunishGold: IDOL_PUNISH_GOLD,
+    /** Basis points of syndicate bank gold removed on idol punishment (3000 = 30%). */
+    idolPunishBankBps: IDOL_PUNISH_BANK_BPS,
   };
 
   // --- Pricing system ---

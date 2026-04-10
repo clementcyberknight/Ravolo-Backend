@@ -2,12 +2,13 @@ import type { Redis } from "ioredis";
 import {
   IDOL_TICK_MS,
   IDOL_REQUEST_DURATION_MS,
-  IDOL_PUNISH_GOLD,
+  IDOL_PUNISH_BANK_BPS,
   IDOL_BLESS_DURATION_MS,
   IDOL_PUNISH_DURATION_MS,
 } from "../config/constants.js";
 import { logger } from "../infrastructure/logger/logger.js";
 import {
+  syndicateBankGoldKey,
   syndicateIndexAllKey,
   syndicateIdolKey,
   syndicateIdolRequestKey,
@@ -46,7 +47,8 @@ export async function runIdolRequestTick(redis: Redis): Promise<void> {
   for (const id of PRICED_ITEM_IDS) {
     pipe.hget(treasurySellFlowKey(), id);
   }
-  const sellFlows = (await pipe.exec())?.map((r) => r?.[1] as string | null) ?? [];
+  const sellFlows =
+    (await pipe.exec())?.map((r) => r?.[1] as string | null) ?? [];
   const targetCommodity = getHighestCirculationItem(sellFlows);
 
   // 3. Process each syndicate
@@ -91,18 +93,19 @@ export async function runIdolRequestTick(redis: Redis): Promise<void> {
     }
 
     // Check existing request
-    const reqData = await redis.hgetall(syndicateIdolRequestKey(sid, currentReqKey));
+    const reqData = await redis.hgetall(
+      syndicateIdolRequestKey(sid, currentReqKey),
+    );
     if (!reqData.deadlineMs) continue;
 
     const deadline = Number(reqData.deadlineMs);
     if (now >= deadline) {
       const progress = Number(reqData.progress) || 0;
       const required = Number(reqData.required) || 1;
-      const w = redis.multi();
 
       if (progress >= required) {
-        // BLESSED
         const nextLevel = level + 1;
+        const w = redis.multi();
         w.hset(
           idolK,
           "level",
@@ -112,7 +115,8 @@ export async function runIdolRequestTick(redis: Redis): Promise<void> {
           "blessedUntilMs",
           String(now + IDOL_BLESS_DURATION_MS),
         );
-        w.hdel(idolK, "currentRequestKey");
+        w.hdel(idolK, "currentRequestKey", "punishedUntilMs");
+        await w.exec();
 
         broadcastToSyndicate(sid, {
           type: "SYNDICATE_IDOL_EVENT",
@@ -123,7 +127,14 @@ export async function runIdolRequestTick(redis: Redis): Promise<void> {
           },
         });
       } else {
-        // PUNISHED
+        const bankKey = syndicateBankGoldKey(sid);
+        const balRaw = await redis.get(bankKey);
+        const balance = Math.max(0, Math.floor(Number(balRaw) || 0));
+        const drain = Math.floor(
+          (balance * IDOL_PUNISH_BANK_BPS) / 10_000,
+        );
+
+        const w = redis.multi();
         w.hset(
           idolK,
           "status",
@@ -131,21 +142,22 @@ export async function runIdolRequestTick(redis: Redis): Promise<void> {
           "punishedUntilMs",
           String(now + IDOL_PUNISH_DURATION_MS),
         );
-        w.hdel(idolK, "currentRequestKey");
-        // Deduct gold penalty
-        w.decrby(`ravolo:syndicate:${sid}:bank_gold`, IDOL_PUNISH_GOLD);
+        w.hdel(idolK, "currentRequestKey", "blessedUntilMs");
+        if (drain > 0) {
+          w.decrby(bankKey, drain);
+        }
+        await w.exec();
 
         broadcastToSyndicate(sid, {
           type: "SYNDICATE_IDOL_EVENT",
           data: {
             event: "PUNISHED",
-            penaltyGold: IDOL_PUNISH_GOLD,
+            penaltyGold: drain,
             untilMs: now + IDOL_PUNISH_DURATION_MS,
             disease: true,
           },
         });
       }
-      await w.exec();
     }
   }
 }

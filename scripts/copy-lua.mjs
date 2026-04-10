@@ -14,6 +14,8 @@ mkdirSync(destDir, { recursive: true });
 for (const name of [
   "plant.lua",
   "harvest.lua",
+  "harvestWither.lua",
+  "clearPlotWither.lua",
   "onboarding.lua",
   "treasurySell.lua",
   "treasuryBuy.lua",
@@ -32,6 +34,7 @@ for (const name of [
   "syndicateAttack.lua",
   "syndicateIdolContribute.lua",
   "syndicateLeaveOrDisband.lua",
+  "syndicateBankSell.lua",
   "decay.lua",
   "redeemRefreshToken.lua",
 ]) {

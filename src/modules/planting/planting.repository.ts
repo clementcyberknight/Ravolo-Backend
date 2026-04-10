@@ -58,6 +58,11 @@ export class PlantingRepository {
         (err as Error & { code: string }).code = "INSUFFICIENT_SEEDS";
         throw err;
       }
+      if (isReplyError(e) && e.message.includes("ERR_PLOT_WITHERED")) {
+        const err = new Error("PLOT_WITHERED");
+        (err as Error & { code: string }).code = "PLOT_WITHERED";
+        throw err;
+      }
       throw e;
     }
   }

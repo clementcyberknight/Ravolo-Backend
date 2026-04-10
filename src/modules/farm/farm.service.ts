@@ -7,14 +7,17 @@ import {
 } from "../../config/constants.js";
 import { LOAN_PLOT_COLLATERAL_GOLD } from "../../config/loan.constants.js";
 import { AppError } from "../../shared/errors/appError.js";
+import { serverNowMs } from "../../shared/utils/time.js";
 import { OnboardingService } from "../onboarding/onboarding.service.js";
 import { FarmRepository } from "./farm.repository.js";
 import type {
   BuyPlotCommand,
   BuyPlotResult,
   GameStatusPlotsData,
+  PlotStateItem,
 } from "./farm.types.js";
 import { buyPlotSchema } from "./farm.validator.js";
+import { buildPlotsState } from "./plotState.js";
 
 export function getGameStatusPlotsData(): GameStatusPlotsData {
   return {
@@ -38,6 +41,11 @@ export class FarmService {
     private readonly farmRepo = new FarmRepository(),
     private readonly onboarding = new OnboardingService(redis),
   ) {}
+
+  /** All owned plots with crop / wither / timing fields (read-only). */
+  async getPlotsState(userId: string, nowMs?: number): Promise<PlotStateItem[]> {
+    return buildPlotsState(this.redis, userId, nowMs ?? serverNowMs());
+  }
 
   async buyPlot(userId: string, raw: unknown): Promise<BuyPlotResult> {
     const parsed = buyPlotSchema.safeParse(raw);

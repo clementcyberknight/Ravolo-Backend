@@ -4,6 +4,7 @@ export type WsUserData = { userId: string; sessionId?: string };
 export type WsInboundMessage =
   | { type: "PLANT"; payload: unknown }
   | { type: "HARVEST"; payload: unknown }
+  | { type: "CLEAR_PLOT_WITHER"; payload: unknown }
   | { type: "SELL"; payload: unknown }
   | { type: "BUY"; payload: unknown }
   | { type: "BUY_PLOT"; payload: unknown }
@@ -34,11 +35,14 @@ export type WsInboundMessage =
   | { type: "SYNDICATE_DASHBOARD"; payload: unknown }
   | { type: "SYNDICATE_BANK_SELL"; payload: unknown }
   | { type: "GET_GAME_STATE"; payload?: unknown }
+  | { type: "GET_PLOT_STATE"; payload?: unknown }
+  | { type: "GET_GOLD_BALANCE"; payload?: unknown }
   | { type: "PING"; payload?: unknown };
 
 export type WsOutboundMessage =
   | { type: "PLANT_OK"; requestEcho?: string; data: unknown }
   | { type: "HARVEST_OK"; requestEcho?: string; data: unknown }
+  | { type: "CLEAR_PLOT_WITHER_OK"; data: unknown }
   | { type: "SELL_OK"; data: unknown }
   | { type: "BUY_OK"; data: unknown }
   | { type: "BUY_PLOT_OK"; data: unknown }
@@ -100,7 +104,10 @@ export type WsOutboundMessage =
         plantedAtMs: number | null;
         readyAtMs: number | null;
         msUntilReady: number | null;
-        status: "empty" | "growing" | "ready";
+        status: "empty" | "growing" | "ready" | "withered";
+        wither?: boolean;
+        outputQty?: number | null;
+        harvestItem?: string | null;
       }[];
       animal: Record<string, string> | null;
       craftPending: Record<string, string | number> | null;
@@ -109,6 +116,18 @@ export type WsOutboundMessage =
       serverNowMs: number;
     };
   }
+  | {
+      type: "GET_PLOT_STATE_OK";
+      data: {
+        userId: string;
+        plots: import("../../modules/farm/farm.types.js").PlotStateItem[];
+        serverNowMs: number;
+      };
+    }
+  | {
+      type: "GET_GOLD_BALANCE_OK";
+      data: { userId: string; gold: number; serverNowMs: number };
+    }
   | { type: "SYNDICATE_IDOL_EVENT"; data: unknown }
   | { type: "ERROR"; code: string; message: string; details?: unknown }
   | { type: "PONG"; serverNowMs: number; clientTs?: unknown };

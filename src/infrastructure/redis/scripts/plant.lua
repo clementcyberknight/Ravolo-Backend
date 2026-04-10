@@ -16,6 +16,11 @@ if cached then
   return cached
 end
 
+local wither = redis.call('HGET', KEYS[1], 'wither')
+if wither == '1' then
+  return redis.error_reply('ERR_PLOT_WITHERED')
+end
+
 local existing = redis.call('HGET', KEYS[1], 'cropId')
 if type(existing) == 'string' and existing ~= '' then
   return redis.error_reply('ERR_PLOT_OCCUPIED')

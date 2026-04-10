@@ -18,11 +18,15 @@ import { handleBuy } from "./handlers/buy.handler.js";
 import { handleBuyPlot } from "./handlers/buyPlot.handler.js";
 import { handleCraftClaim, handleCraftStart } from "./handlers/crafting.handler.js";
 import { handleLoanOpen, handleLoanRepay } from "./handlers/loan.handler.js";
-import { handleHarvest } from "./handlers/harvest.handler.js";
+import { handleClearPlotWither, handleHarvest } from "./handlers/harvest.handler.js";
 import { handlePlant } from "./handlers/plant.handler.js";
 import { handleSell } from "./handlers/sell.handler.js";
 import { handleViewLeaderboard } from "./handlers/leaderboard.handler.js";
-import { handleGetGameState } from "./handlers/gameState.handler.js";
+import {
+  handleGetGameState,
+  handleGetGoldBalance,
+  handleGetPlotState,
+} from "./handlers/gameState.handler.js";
 import type { LeaderboardService } from "../../modules/leaderboard/leaderboard.service.js";
 import {
   handleAcceptRequest,
@@ -92,6 +96,14 @@ export async function dispatchWsMessage(
       return;
     case "HARVEST":
       await handleHarvest(ws, msg.payload, ctx.harvesting, ctx.userActions);
+      return;
+    case "CLEAR_PLOT_WITHER":
+      await handleClearPlotWither(
+        ws,
+        msg.payload,
+        ctx.harvesting,
+        ctx.userActions,
+      );
       return;
     case "SELL":
       await handleSell(ws, msg.payload, ctx.market, ctx.userActions);
@@ -182,6 +194,12 @@ export async function dispatchWsMessage(
       return;
     case "GET_GAME_STATE":
       await handleGetGameState(ws, ctx.redis);
+      return;
+    case "GET_PLOT_STATE":
+      await handleGetPlotState(ws, msg.payload, ctx.farm);
+      return;
+    case "GET_GOLD_BALANCE":
+      await handleGetGoldBalance(ws, msg.payload, ctx.market);
       return;
     default:
       logger.warn({ msg }, "unhandled ws message type");

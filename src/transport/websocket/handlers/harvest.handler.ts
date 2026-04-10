@@ -7,6 +7,48 @@ import { wsActionLimiter } from "../ws.rateLimiter.js";
 import { sendGameMessage as send } from "../ws.codec.js";
 import type { WsOutboundMessage, WsUserData } from "../ws.types.js";
 
+export async function handleClearPlotWither(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  harvesting: HarvestingService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  try {
+    await wsActionLimiter.consume(userId);
+  } catch {
+    send(ws, {
+      type: "ERROR",
+      code: "RATE_LIMITED",
+      message: "Too many actions",
+    });
+    return;
+  }
+
+  try {
+    const data = await harvesting.clearPlotWither(userId, payload);
+    void userActions.log(userId, "CLEAR_PLOT_WITHER", payload);
+    send(ws, { type: "CLEAR_PLOT_WITHER_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    if (e instanceof AppError) {
+      logger.warn({ e: e.code, userId }, e.message);
+      send(ws, {
+        type: "ERROR",
+        code: e.code,
+        message: e.httpSafeMessage,
+        details: e.details,
+      });
+      return;
+    }
+    logger.error({ err: e, userId }, "clear plot wither failed");
+    send(ws, {
+      type: "ERROR",
+      code: "INTERNAL",
+      message: "Internal error",
+    });
+  }
+}
+
 export async function handleHarvest(
   ws: WebSocket<WsUserData>,
   payload: unknown,

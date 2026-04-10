@@ -68,6 +68,11 @@ export class PlantingService {
           need: def.seedCost,
         });
       }
+      if (e instanceof Error && (e as Error & { code?: string }).code === "PLOT_WITHERED") {
+        throw new AppError("PLOT_WITHERED", "Clear withered plot before planting", {
+          plotId: cmd.plotId,
+        });
+      }
       throw e;
     }
   }

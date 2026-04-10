@@ -1,21 +1,48 @@
 import type { WebSocket } from "uWebSockets.js";
 import type { Redis } from "ioredis";
+import { z } from "zod";
 import { logger } from "../../../infrastructure/logger/logger.js";
+import type { FarmService } from "../../../modules/farm/farm.service.js";
+import type { MarketService } from "../../../modules/market/market.service.js";
+import { AppError } from "../../../shared/errors/appError.js";
 import { sendGameMessage as send } from "../ws.codec.js";
 import type { WsUserData } from "../ws.types.js";
 import {
   walletKey,
   inventoryKey,
   inventoryLockedKey,
-  ownedPlotsKey,
-  plotKey,
   animalStateKey,
   craftPendingKey,
   loanActiveKey,
   userLevelKey,
   userSyndicateIdKey,
 } from "../../../infrastructure/redis/keys.js";
+import { buildPlotsState } from "../../../modules/farm/plotState.js";
 import { serverNowMs } from "../../../shared/utils/time.js";
+
+const optionalTargetUserIdSchema = z
+  .object({ userId: z.string().min(1).max(64).optional() })
+  .strict();
+
+function resolveTargetUserIdOrThrow(
+  socketUserId: string,
+  payload: unknown,
+): string {
+  const parsed = optionalTargetUserIdSchema.safeParse(payload ?? {});
+  if (!parsed.success) {
+    throw new AppError("BAD_REQUEST", "Invalid payload", {
+      issues: parsed.error.issues,
+    });
+  }
+  const { userId } = parsed.data;
+  if (userId !== undefined && userId !== socketUserId) {
+    throw new AppError(
+      "NOT_AUTHORIZED",
+      "You can only read your own plot and wallet state",
+    );
+  }
+  return userId ?? socketUserId;
+}
 
 /**
  * GET_GAME_STATE — returns the full snapshot of the authenticated player's state.
@@ -47,7 +74,6 @@ export async function handleGetGameState(
       levelRaw,
       invRaw,
       invLockedRaw,
-      plotIds,
       animalRaw,
       craftRaw,
       activeLoanId,
@@ -57,7 +83,6 @@ export async function handleGetGameState(
       redis.get(userLevelKey(userId)),
       redis.hgetall(inventoryKey(userId)),
       redis.hgetall(inventoryLockedKey(userId)),
-      redis.smembers(ownedPlotsKey(userId)),
       redis.hgetall(animalStateKey(userId)),
       redis.hgetall(craftPendingKey(userId)),
       redis.get(loanActiveKey(userId)),
@@ -86,36 +111,8 @@ export async function handleGetGameState(
       if (n > 0) lockedInv[k] = n;
     }
 
-    // ── Fetch individual plot state in parallel ───────────────────────────────
     const now = serverNowMs();
-    const plots = await Promise.all(
-      plotIds.map(async (id) => {
-        const state = await redis.hgetall(plotKey(userId, Number(id)));
-        const readyAtMs = Number(state.readyAtMs ?? 0);
-        const plantedAtMs = Number(state.plantedAtMs ?? 0);
-
-        let status: "empty" | "growing" | "ready";
-        if (!state.cropId) {
-          status = "empty";
-        } else if (readyAtMs > 0 && now >= readyAtMs) {
-          status = "ready";
-        } else {
-          status = "growing";
-        }
-
-        return {
-          plotId: Number(id),
-          cropId: state.cropId ?? null,
-          plantedAtMs: plantedAtMs || null,
-          readyAtMs: readyAtMs || null,
-          msUntilReady: status === "growing" ? Math.max(0, readyAtMs - now) : null,
-          status,
-        };
-      }),
-    );
-
-    // Sort plots by plotId ascending for stable ordering
-    plots.sort((a, b) => a.plotId - b.plotId);
+    const plots = await buildPlotsState(redis, userId, now);
 
     // ── Parse animal state ────────────────────────────────────────────────────
     const animal =
@@ -158,6 +155,82 @@ export async function handleGetGameState(
       type: "ERROR",
       code: "INTERNAL",
       message: "Failed to load game state",
+    });
+  }
+}
+
+/**
+ * GET_PLOT_STATE — plots only for the authenticated user (optional `userId` must match socket).
+ * Response: GET_PLOT_STATE_OK { userId, plots, serverNowMs }
+ */
+export async function handleGetPlotState(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  farm: FarmService,
+): Promise<void> {
+  const socketUserId = ws.getUserData().userId;
+  try {
+    const targetUserId = resolveTargetUserIdOrThrow(socketUserId, payload);
+    const now = serverNowMs();
+    const plots = await farm.getPlotsState(targetUserId, now);
+    send(ws, {
+      type: "GET_PLOT_STATE_OK",
+      data: { userId: targetUserId, plots, serverNowMs: now },
+    });
+  } catch (e) {
+    if (e instanceof AppError) {
+      logger.warn({ e: e.code, userId: socketUserId }, e.message);
+      send(ws, {
+        type: "ERROR",
+        code: e.code,
+        message: e.httpSafeMessage,
+        details: e.details,
+      });
+      return;
+    }
+    logger.error({ err: e, userId: socketUserId }, "get plot state failed");
+    send(ws, {
+      type: "ERROR",
+      code: "INTERNAL",
+      message: "Failed to load plot state",
+    });
+  }
+}
+
+/**
+ * GET_GOLD_BALANCE — wallet gold for the authenticated user (optional `userId` must match socket).
+ * Response: GET_GOLD_BALANCE_OK { userId, gold, serverNowMs }
+ */
+export async function handleGetGoldBalance(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  market: MarketService,
+): Promise<void> {
+  const socketUserId = ws.getUserData().userId;
+  try {
+    const targetUserId = resolveTargetUserIdOrThrow(socketUserId, payload);
+    const now = serverNowMs();
+    const gold = await market.getUserGold(targetUserId);
+    send(ws, {
+      type: "GET_GOLD_BALANCE_OK",
+      data: { userId: targetUserId, gold, serverNowMs: now },
+    });
+  } catch (e) {
+    if (e instanceof AppError) {
+      logger.warn({ e: e.code, userId: socketUserId }, e.message);
+      send(ws, {
+        type: "ERROR",
+        code: e.code,
+        message: e.httpSafeMessage,
+        details: e.details,
+      });
+      return;
+    }
+    logger.error({ err: e, userId: socketUserId }, "get gold balance failed");
+    send(ws, {
+      type: "ERROR",
+      code: "INTERNAL",
+      message: "Failed to load gold balance",
     });
   }
 }

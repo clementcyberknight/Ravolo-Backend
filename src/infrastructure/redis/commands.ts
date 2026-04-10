@@ -32,6 +32,8 @@ function resolveLuaFile(name: string): string {
 
 let plantSha: string | null = null;
 let harvestSha: string | null = null;
+let harvestWitherSha: string | null = null;
+let clearPlotWitherSha: string | null = null;
 let onboardSha: string | null = null;
 let sellSha: string | null = null;
 let buySha: string | null = null;
@@ -57,6 +59,14 @@ let redeemRefreshTokenSha: string | null = null;
 export async function loadRedisScripts(redis: Redis): Promise<void> {
   const plantSrc = readFileSync(resolveLuaFile("plant.lua"), "utf8");
   const harvestSrc = readFileSync(resolveLuaFile("harvest.lua"), "utf8");
+  const harvestWitherSrc = readFileSync(
+    resolveLuaFile("harvestWither.lua"),
+    "utf8",
+  );
+  const clearPlotWitherSrc = readFileSync(
+    resolveLuaFile("clearPlotWither.lua"),
+    "utf8",
+  );
   const onboardSrc = readFileSync(resolveLuaFile("onboarding.lua"), "utf8");
   const sellSrc = readFileSync(resolveLuaFile("treasurySell.lua"), "utf8");
   const buySrc = readFileSync(resolveLuaFile("treasuryBuy.lua"), "utf8");
@@ -110,6 +120,8 @@ export async function loadRedisScripts(redis: Redis): Promise<void> {
 
   plantSha = (await redis.script("LOAD", plantSrc)) as string;
   harvestSha = (await redis.script("LOAD", harvestSrc)) as string;
+  harvestWitherSha = (await redis.script("LOAD", harvestWitherSrc)) as string;
+  clearPlotWitherSha = (await redis.script("LOAD", clearPlotWitherSrc)) as string;
   onboardSha = (await redis.script("LOAD", onboardSrc)) as string;
   sellSha = (await redis.script("LOAD", sellSrc)) as string;
   buySha = (await redis.script("LOAD", buySrc)) as string;
@@ -193,6 +205,16 @@ export type HarvestScriptResult =
   | { ok: true; itemId: string; quantity: number }
   | { ok: true; idempotentReplay: true; itemId: string; quantity: number };
 
+export type HarvestWitherScriptResult =
+  | { ok: true; kind: "withered_harvest"; itemId: string; quantity: 0 }
+  | {
+      ok: true;
+      kind: "withered_harvest";
+      idempotentReplay: true;
+      itemId: string;
+      quantity: 0;
+    };
+
 function parsePlantPayload(
   raw: string,
   idempotent: boolean,
@@ -222,6 +244,28 @@ function parseHarvestPayload(
   }
   const [, itemId, qty] = parts;
   const base = { ok: true as const, itemId, quantity: Number(qty) };
+  return idempotent ? { ...base, idempotentReplay: true } : base;
+}
+
+function parseHarvestWitherPayload(
+  raw: string,
+  idempotent: boolean,
+): HarvestWitherScriptResult {
+  const parts = raw.split("|");
+  if (
+    parts[0] !== "OK" ||
+    parts[1] !== "WITHERED" ||
+    parts.length !== 4
+  ) {
+    throw new Error(`Invalid harvest wither payload: ${raw}`);
+  }
+  const itemId = parts[2]!;
+  const base = {
+    ok: true as const,
+    kind: "withered_harvest" as const,
+    itemId,
+    quantity: 0 as const,
+  };
   return idempotent ? { ...base, idempotentReplay: true } : base;
 }
 
@@ -264,6 +308,7 @@ export async function redisPlant(
     return parsePlantPayload(res, false);
   } catch (e) {
     if (isReplyError(e) && e.message.includes("ERR_PLOT_OCCUPIED")) throw e;
+    if (isReplyError(e) && e.message.includes("ERR_PLOT_WITHERED")) throw e;
     if (isReplyError(e) && e.message.includes("ERR_INSUFFICIENT_SEEDS"))
       throw e;
     if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
@@ -318,6 +363,68 @@ export async function redisGetHarvestIdempotency(
   const raw = await redis.get(idempKey);
   if (!raw) return null;
   return parseHarvestPayload(raw, true);
+}
+
+export async function redisHarvestWither(
+  redis: Redis,
+  keys: { plotKey: string; idempKey: string },
+  args: { nowMs: number },
+): Promise<HarvestWitherScriptResult> {
+  if (!harvestWitherSha) throw new Error("Redis scripts not loaded");
+
+  const idempTtl = IDEMPOTENCY_TTL_SEC;
+  try {
+    const res = (await redis.evalsha(
+      harvestWitherSha,
+      2,
+      keys.plotKey,
+      keys.idempKey,
+      String(args.nowMs),
+      String(idempTtl),
+    )) as string;
+    return parseHarvestWitherPayload(res, false);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisHarvestWither(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export async function redisGetHarvestWitherIdempotency(
+  redis: Redis,
+  idempKey: string,
+): Promise<HarvestWitherScriptResult | null> {
+  const raw = await redis.get(idempKey);
+  if (!raw) return null;
+  return parseHarvestWitherPayload(raw, true);
+}
+
+export async function redisClearPlotWither(
+  redis: Redis,
+  keys: { plotKey: string; idempKey: string },
+): Promise<{ ok: true } | { ok: true; idempotentReplay: true }> {
+  if (!clearPlotWitherSha) throw new Error("Redis scripts not loaded");
+
+  const idempTtl = IDEMPOTENCY_TTL_SEC;
+  try {
+    const res = (await redis.evalsha(
+      clearPlotWitherSha,
+      2,
+      keys.plotKey,
+      keys.idempKey,
+      String(idempTtl),
+    )) as string;
+    if (res === "OK") return { ok: true };
+    throw new Error(`Invalid clear wither reply: ${res}`);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisClearPlotWither(redis, keys);
+    }
+    throw e;
+  }
 }
 
 export async function redisOnboard(
@@ -972,7 +1079,12 @@ export async function redisSyndicateRequestJoin(
     userLevelKey: string;
     userWalletKey: string;
   },
-  args: { userId: string; nowMs: number; idempTtlSec: number; maxMembers: number },
+  args: {
+    userId: string;
+    nowMs: number;
+    idempTtlSec: number;
+    maxMembers: number;
+  },
 ): Promise<"OK|JOINED" | "OK|REQUESTED"> {
   if (!syndicateRequestJoinSha) throw new Error("Redis scripts not loaded");
   try {

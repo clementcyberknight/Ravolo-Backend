@@ -90,5 +90,5 @@ export const IDOL_BLESS_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 /** Duration of idol punishment (ms). 7 days. */
 export const IDOL_PUNISH_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Gold penalty deducted from syndicate bank on idol failure. */
-export const IDOL_PUNISH_GOLD = 500;
+/** Portion of syndicate bank gold removed on idol punishment (basis points: 3000 = 30%). */
+export const IDOL_PUNISH_BANK_BPS = 3000;

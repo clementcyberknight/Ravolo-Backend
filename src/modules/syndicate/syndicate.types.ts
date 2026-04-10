@@ -25,7 +25,7 @@ export type SyndicateMember = {
 export type SyndicateView = SyndicateSummary & {
   ownerId: string;
   createdAtMs: number;
-  joinRequests?: { userId: string; requestedAtMs: number }[];
+  joinRequests?: { userId: string; requestedAtMs: number; level: number }[];
   membersList: SyndicateMember[];
 };
 
@@ -49,6 +49,35 @@ export type RequestJoinCommand = {
 };
 
 export type AcceptJoinCommand = {
+  requestId: string;
+  syndicateId: string;
+  userId: string;
+};
+
+export type CancelJoinRequestCommand = {
+  requestId: string;
+  syndicateId: string;
+};
+
+export type RejectJoinRequestCommand = {
+  requestId: string;
+  syndicateId: string;
+  userId: string;
+};
+
+export type KickMemberCommand = {
+  requestId: string;
+  syndicateId: string;
+  userId: string;
+};
+
+export type PromoteMemberCommand = {
+  requestId: string;
+  syndicateId: string;
+  userId: string;
+};
+
+export type DemoteMemberCommand = {
   requestId: string;
   syndicateId: string;
   userId: string;
@@ -162,4 +191,5 @@ export type SyndicateDashboardView = {
   onlineCount: number;
   members: DashboardMember[];
   commodities: CommodityStat[];
+  joinRequests?: { userId: string; requestedAtMs: number; level: number }[];
 };

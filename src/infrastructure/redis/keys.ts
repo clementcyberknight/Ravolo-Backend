@@ -201,6 +201,10 @@ export function userSyndicateIdKey(userId: string): string {
   return `ravolo:${userTag(userId)}:syndicate_id`;
 }
 
+export function userPendingSyndicateIdKey(userId: string): string {
+  return `ravolo:${userTag(userId)}:syndicate_pending_id`;
+}
+
 export function userLastSeenKey(userId: string): string {
   return `ravolo:${userTag(userId)}:last_seen_ms`;
 }

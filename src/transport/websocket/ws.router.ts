@@ -26,6 +26,11 @@ import { handleGetGameState } from "./handlers/gameState.handler.js";
 import type { LeaderboardService } from "../../modules/leaderboard/leaderboard.service.js";
 import {
   handleAcceptRequest,
+  handleKickMember,
+  handlePromoteMember,
+  handleDemoteMember,
+  handleCancelJoinRequest,
+  handleRejectRequest,
   handleAttackSyndicate,
   handleBuyShield,
   handleCreateSyndicate,
@@ -134,6 +139,21 @@ export async function dispatchWsMessage(
       return;
     case "ACCEPT_REQUEST":
       await handleAcceptRequest(ws, msg.payload, ctx.syndicates, ctx.userActions);
+      return;
+    case "KICK_MEMBER":
+      await handleKickMember(ws, msg.payload, ctx.syndicates, ctx.userActions);
+      return;
+    case "PROMOTE_MEMBER":
+      await handlePromoteMember(ws, msg.payload, ctx.syndicates, ctx.userActions);
+      return;
+    case "DEMOTE_MEMBER":
+      await handleDemoteMember(ws, msg.payload, ctx.syndicates, ctx.userActions);
+      return;
+    case "CANCEL_JOIN_REQUEST":
+      await handleCancelJoinRequest(ws, msg.payload, ctx.syndicates, ctx.userActions);
+      return;
+    case "REJECT_REQUEST":
+      await handleRejectRequest(ws, msg.payload, ctx.syndicates, ctx.userActions);
       return;
     case "DEPOSIT_BANK":
       await handleDepositBank(ws, msg.payload, ctx.syndicates, ctx.userActions);

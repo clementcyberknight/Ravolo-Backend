@@ -8,6 +8,7 @@
 -- 6 idempKey
 -- 7 userLevelKey (HASH field "level")
 -- 8 userWalletKey (HASH field "gold")
+-- 9 userPendingSyndicateKey
 --
 -- ARGV:
 -- 1 userId
@@ -23,6 +24,11 @@ end
 local sid = redis.call('GET', KEYS[1])
 if sid and sid ~= '' then
   return redis.error_reply('ERR_ALREADY_IN_SYNDICATE')
+end
+
+local pendingSid = redis.call('GET', KEYS[9])
+if pendingSid and pendingSid ~= '' then
+  return redis.error_reply('ERR_ALREADY_REQUESTED')
 end
 
 local id = redis.call('HGET', KEYS[2], 'id')
@@ -63,6 +69,8 @@ if vis == 'public' then
 end
 
 redis.call('SADD', KEYS[5], ARGV[1])
+redis.call('SET', KEYS[9], id)
+
 local reply = 'OK|REQUESTED'
 redis.call('SET', KEYS[6], reply, 'EX', tonumber(ARGV[3]) or 60)
 return reply

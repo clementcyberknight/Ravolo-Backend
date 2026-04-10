@@ -45,6 +45,9 @@ let craftClaimSha: string | null = null;
 let syndicateCreateSha: string | null = null;
 let syndicateRequestJoinSha: string | null = null;
 let syndicateAcceptJoinSha: string | null = null;
+let syndicateRemoveJoinRequestSha: string | null = null;
+let syndicateKickMemberSha: string | null = null;
+let syndicatePromoteDemoteSha: string | null = null;
 let syndicateDepositSha: string | null = null;
 let syndicateBuyShieldSha: string | null = null;
 let syndicateAttackSha: string | null = null;
@@ -131,6 +134,30 @@ export async function loadRedisScripts(redis: Redis): Promise<void> {
   syndicateAcceptJoinSha = (await redis.script(
     "LOAD",
     syndicateAcceptJoinSrc,
+  )) as string;
+  const syndicateRemoveJoinRequestSrc = readFileSync(
+    resolveLuaFile("syndicateRemoveJoinRequest.lua"),
+    "utf8",
+  );
+  syndicateRemoveJoinRequestSha = (await redis.script(
+    "LOAD",
+    syndicateRemoveJoinRequestSrc,
+  )) as string;
+  const syndicateKickMemberSrc = readFileSync(
+    resolveLuaFile("syndicateKickMember.lua"),
+    "utf8",
+  );
+  syndicateKickMemberSha = (await redis.script(
+    "LOAD",
+    syndicateKickMemberSrc,
+  )) as string;
+  const syndicatePromoteDemoteSrc = readFileSync(
+    resolveLuaFile("syndicatePromoteDemote.lua"),
+    "utf8",
+  );
+  syndicatePromoteDemoteSha = (await redis.script(
+    "LOAD",
+    syndicatePromoteDemoteSrc,
   )) as string;
   syndicateDepositSha = (await redis.script(
     "LOAD",
@@ -911,6 +938,7 @@ export async function redisSyndicateCreate(
     indexAllKey: string;
     indexPublicKey: string;
     idempKey: string;
+    userPendingSyndicateKey: string;
   },
   args: {
     userId: string;
@@ -930,7 +958,7 @@ export async function redisSyndicateCreate(
   try {
     const res = (await redis.evalsha(
       syndicateCreateSha,
-      7,
+      8,
       keys.seqKey,
       keys.userSyndicateKey,
       keys.userLevelKey,
@@ -938,6 +966,7 @@ export async function redisSyndicateCreate(
       keys.indexAllKey,
       keys.indexPublicKey,
       keys.idempKey,
+      keys.userPendingSyndicateKey,
       args.userId,
       String(args.minLevel),
       args.name,
@@ -971,6 +1000,7 @@ export async function redisSyndicateRequestJoin(
     idempKey: string;
     userLevelKey: string;
     userWalletKey: string;
+    userPendingSyndicateKey: string;
   },
   args: { userId: string; nowMs: number; idempTtlSec: number; maxMembers: number },
 ): Promise<"OK|JOINED" | "OK|REQUESTED"> {
@@ -978,7 +1008,7 @@ export async function redisSyndicateRequestJoin(
   try {
     const res = (await redis.evalsha(
       syndicateRequestJoinSha,
-      8,
+      9,
       keys.userSyndicateKey,
       keys.metaKey,
       keys.membersKey,
@@ -987,6 +1017,7 @@ export async function redisSyndicateRequestJoin(
       keys.idempKey,
       keys.userLevelKey,
       keys.userWalletKey,
+      keys.userPendingSyndicateKey,
       args.userId,
       String(args.nowMs),
       String(args.idempTtlSec),
@@ -1013,6 +1044,7 @@ export async function redisSyndicateAcceptJoin(
     rolesKey: string;
     targetUserSyndicateKey: string;
     idempKey: string;
+    targetUserPendingSyndicateKey: string;
   },
   args: {
     actorUserId: string;
@@ -1026,7 +1058,7 @@ export async function redisSyndicateAcceptJoin(
   try {
     const res = (await redis.evalsha(
       syndicateAcceptJoinSha,
-      7,
+      8,
       keys.actorUserSyndicateKey,
       keys.metaKey,
       keys.joinReqKey,
@@ -1034,6 +1066,7 @@ export async function redisSyndicateAcceptJoin(
       keys.rolesKey,
       keys.targetUserSyndicateKey,
       keys.idempKey,
+      keys.targetUserPendingSyndicateKey,
       args.actorUserId,
       args.targetUserId,
       String(args.nowMs),
@@ -1046,6 +1079,134 @@ export async function redisSyndicateAcceptJoin(
     if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
       await loadRedisScripts(redis);
       return redisSyndicateAcceptJoin(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export async function redisSyndicateKickMember(
+  redis: Redis,
+  keys: {
+    actorUserSyndicateKey: string;
+    membersKey: string;
+    rolesKey: string;
+    targetUserSyndicateKey: string;
+    idempKey: string;
+  },
+  args: {
+    actorUserId: string;
+    targetUserId: string;
+    syndicateId: string;
+    idempTtlSec: number;
+  },
+): Promise<"OK"> {
+  if (!syndicateKickMemberSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      syndicateKickMemberSha,
+      5,
+      keys.actorUserSyndicateKey,
+      keys.membersKey,
+      keys.rolesKey,
+      keys.targetUserSyndicateKey,
+      keys.idempKey,
+      args.actorUserId,
+      args.targetUserId,
+      args.syndicateId,
+      String(args.idempTtlSec),
+    )) as string;
+    if (res === "OK") return "OK";
+    throw new Error(`Invalid syndicate kick member reply: ${res}`);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisSyndicateKickMember(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export async function redisSyndicatePromoteDemote(
+  redis: Redis,
+  keys: {
+    actorUserSyndicateKey: string;
+    rolesKey: string;
+    idempKey: string;
+  },
+  args: {
+    actorUserId: string;
+    targetUserId: string;
+    syndicateId: string;
+    mode: "promote" | "demote";
+    idempTtlSec: number;
+    maxAdmins: number;
+  },
+): Promise<"OK"> {
+  if (!syndicatePromoteDemoteSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      syndicatePromoteDemoteSha,
+      3,
+      keys.actorUserSyndicateKey,
+      keys.rolesKey,
+      keys.idempKey,
+      args.actorUserId,
+      args.targetUserId,
+      args.syndicateId,
+      args.mode,
+      String(args.idempTtlSec),
+      String(args.maxAdmins),
+    )) as string;
+    if (res === "OK") return "OK";
+    throw new Error(`Invalid syndicate promote/demote reply: ${res}`);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisSyndicatePromoteDemote(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+export async function redisSyndicateRemoveJoinRequest(
+  redis: Redis,
+  keys: {
+    actorUserSyndicateKey: string;
+    joinReqKey: string;
+    targetUserPendingSyndicateKey: string;
+    rolesKey: string;
+    idempKey: string;
+  },
+  args: {
+    actorUserId: string;
+    targetUserId: string;
+    syndicateId: string;
+    mode: "cancel" | "reject";
+    idempTtlSec: number;
+  },
+): Promise<"OK"> {
+  if (!syndicateRemoveJoinRequestSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      syndicateRemoveJoinRequestSha,
+      5,
+      keys.actorUserSyndicateKey,
+      keys.joinReqKey,
+      keys.targetUserPendingSyndicateKey,
+      keys.rolesKey,
+      keys.idempKey,
+      args.actorUserId,
+      args.targetUserId,
+      args.syndicateId,
+      args.mode,
+      String(args.idempTtlSec),
+    )) as string;
+    if (res === "OK") return "OK";
+    throw new Error(`Invalid syndicate remove join request reply: ${res}`);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisSyndicateRemoveJoinRequest(redis, keys, args);
     }
     throw e;
   }

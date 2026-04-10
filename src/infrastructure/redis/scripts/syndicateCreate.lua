@@ -7,6 +7,7 @@
 -- 5 indexAllKey
 -- 6 indexPublicKey
 -- 7 idempKey
+-- 8 userPendingSyndicateKey
 --
 -- ARGV:
 -- 1 userId
@@ -89,6 +90,7 @@ if vis == 'public' then
 end
 
 redis.call('SET', KEYS[2], nextId)
+redis.call('DEL', KEYS[8])
 
 local reply = 'OK|' .. nextId
 redis.call('SET', KEYS[7], reply, 'EX', tonumber(ARGV[9]) or 60)

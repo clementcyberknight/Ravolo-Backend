@@ -32,6 +32,7 @@ import {
   userLastSeenKey,
   userLevelKey,
   userSyndicateIdKey,
+  userPendingSyndicateIdKey,
   walletKey,
   syndicateHoldingsKey,
   treasurySellPricesKey,
@@ -47,7 +48,10 @@ import {
   redisSyndicateCreate,
   redisSyndicateDeposit,
   redisSyndicateIdolContribute,
+  redisSyndicateKickMember,
   redisSyndicateLeaveOrDisband,
+  redisSyndicatePromoteDemote,
+  redisSyndicateRemoveJoinRequest,
   redisSyndicateRequestJoin,
 } from "../../infrastructure/redis/commands.js";
 import { AppError } from "../../shared/errors/appError.js";
@@ -62,14 +66,19 @@ import type {
   BankSellCommand,
   BankSellResult,
   BuyShieldCommand,
+  CancelJoinRequestCommand,
   CommodityStat,
   CreateSyndicateCommand,
   DashboardMember,
+  DemoteMemberCommand,
   DepositBankCommand,
   DisbandSyndicateCommand,
   IdolContributeCommand,
+  KickMemberCommand,
   LeaveSyndicateCommand,
   ListSyndicatesQuery,
+  PromoteMemberCommand,
+  RejectJoinRequestCommand,
   RequestJoinCommand,
   SyndicateChatSendCommand,
   SyndicateDashboardQuery,
@@ -86,11 +95,16 @@ import {
   attackSyndicateSchema,
   bankSellSchema,
   buyShieldSchema,
+  cancelJoinRequestSchema,
   createSyndicateSchema,
+  demoteMemberSchema,
   depositBankSchema,
   disbandSyndicateSchema,
   idolContributeSchema,
+  kickMemberSchema,
   leaveSyndicateSchema,
+  promoteMemberSchema,
+  rejectJoinRequestSchema,
   requestJoinSchema,
   syndicateChatSendSchema,
   syndicateDashboardSchema,
@@ -190,7 +204,12 @@ export class SyndicateService {
     let joinRequests: SyndicateView["joinRequests"] | undefined;
     if (isMember && (role === "owner" || role === "officer")) {
       const reqs = await this.repo.joinRequests(this.redis, syndicateId);
-      joinRequests = reqs.map((u) => ({ userId: u, requestedAtMs: 0 }));
+      const lvls = await this.repo.getMemberLevels(this.redis, reqs);
+      joinRequests = reqs.map((u) => ({
+        userId: u,
+        requestedAtMs: 0,
+        level: lvls[u] ?? 1,
+      }));
     }
 
     return {
@@ -244,6 +263,7 @@ export class SyndicateService {
           idempTtlSec: IDEMPOTENCY_TTL_SEC,
           syndicateKeyPrefix: "ravolo:syndicate:",
           emblemId: cmd.emblemId,
+          userPendingSyndicateKey: userPendingSyndicateIdKey(userId),
         },
       );
       return { syndicateId: res.syndicateId };
@@ -273,6 +293,7 @@ export class SyndicateService {
           idempKey: `ravolo:${userId}:idemp:syndicate_join_req:${cmd.requestId}`,
           userLevelKey: userLevelKey(userId),
           userWalletKey: walletKey(userId),
+          userPendingSyndicateKey: userPendingSyndicateIdKey(userId),
         },
         { userId, nowMs: nowMs(), idempTtlSec: IDEMPOTENCY_TTL_SEC, maxMembers: MAX_SYNDICATE_MEMBERS },
       );
@@ -303,6 +324,7 @@ export class SyndicateService {
           rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
           targetUserSyndicateKey: userSyndicateIdKey(cmd.userId),
           idempKey: `ravolo:${userId}:idemp:syndicate_accept:${cmd.requestId}`,
+          targetUserPendingSyndicateKey: userPendingSyndicateIdKey(cmd.userId),
         },
         {
           actorUserId: userId,
@@ -594,6 +616,174 @@ export class SyndicateService {
     return { ok: true };
   }
 
+  async cancelJoinRequest(
+    userId: string,
+    raw: unknown,
+  ): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = cancelJoinRequestSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid cancel join request payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as CancelJoinRequestCommand;
+
+    try {
+      await redisSyndicateRemoveJoinRequest(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          joinReqKey: syndicateJoinRequestsKey(cmd.syndicateId),
+          targetUserPendingSyndicateKey: userPendingSyndicateIdKey(userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_cancel_join:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: userId,
+          syndicateId: cmd.syndicateId,
+          mode: "cancel",
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
+  async rejectJoinRequest(
+    userId: string,
+    raw: unknown,
+  ): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = rejectJoinRequestSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid reject join request payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as RejectJoinRequestCommand;
+
+    try {
+      await redisSyndicateRemoveJoinRequest(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          joinReqKey: syndicateJoinRequestsKey(cmd.syndicateId),
+          targetUserPendingSyndicateKey: userPendingSyndicateIdKey(cmd.userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_reject_join:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: cmd.userId,
+          syndicateId: cmd.syndicateId,
+          mode: "reject",
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
+  async kickMember(userId: string, raw: unknown): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = kickMemberSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid kick member payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as KickMemberCommand;
+
+    try {
+      await redisSyndicateKickMember(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          membersKey: syndicateMembersKey(cmd.syndicateId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          targetUserSyndicateKey: userSyndicateIdKey(cmd.userId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_kick:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: cmd.userId,
+          syndicateId: cmd.syndicateId,
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
+  async promoteMember(userId: string, raw: unknown): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = promoteMemberSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid promote member payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as PromoteMemberCommand;
+
+    try {
+      await redisSyndicatePromoteDemote(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_promote:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: cmd.userId,
+          syndicateId: cmd.syndicateId,
+          mode: "promote",
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+          maxAdmins: 10,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
+  async demoteMember(userId: string, raw: unknown): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = demoteMemberSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid demote member payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as DemoteMemberCommand;
+
+    try {
+      await redisSyndicatePromoteDemote(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_demote:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: cmd.userId,
+          syndicateId: cmd.syndicateId,
+          mode: "demote",
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+          maxAdmins: 10,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
   async disband(userId: string, raw: unknown): Promise<{ ok: true }> {
     await this.onboarding.ensureOnboarded(userId);
     const parsed = disbandSyndicateSchema.safeParse(raw);
@@ -646,6 +836,8 @@ export class SyndicateService {
         return new AppError("NOT_AUTHORIZED", "Not authorized");
       if (msg.includes("ERR_JOIN_REQUEST_MISSING"))
         return new AppError("JOIN_REQUEST_MISSING", "Join request missing");
+      if (msg.includes("ERR_ALREADY_REQUESTED"))
+        return new AppError("ALREADY_REQUESTED", "Already have a pending join request");
       if (msg.includes("ERR_TARGET_ALREADY_IN_SYNDICATE"))
         return new AppError(
           "TARGET_ALREADY_IN_SYNDICATE",
@@ -671,6 +863,20 @@ export class SyndicateService {
         return new AppError("INSUFFICIENT_INV", "Insufficient inventory");
       if (msg.includes("ERR_BAD_ARGS"))
         return new AppError("BAD_REQUEST", "Invalid request");
+      if (msg.includes("ERR_CANNOT_KICK_SELF"))
+        return new AppError("BAD_REQUEST", "Cannot kick self");
+      if (msg.includes("ERR_TARGET_NOT_IN_SYNDICATE"))
+        return new AppError("BAD_REQUEST", "Target not in syndicate");
+      if (msg.includes("ERR_CANNOT_KICK_OWNER"))
+        return new AppError("BAD_REQUEST", "Cannot kick owner");
+      if (msg.includes("ERR_ALREADY_ADMIN"))
+        return new AppError("BAD_REQUEST", "Member is already an admin");
+      if (msg.includes("ERR_MAX_ADMINS_REACHED"))
+        return new AppError("MAX_ADMINS_REACHED", "Max 10 admins allowed");
+      if (msg.includes("ERR_ALREADY_MEMBER"))
+        return new AppError("BAD_REQUEST", "Target is already a member");
+      if (msg.includes("ERR_CANNOT_DEMOTE_OWNER"))
+        return new AppError("BAD_REQUEST", "Cannot demote owner");
       if (msg.includes("ERR_TREASURY_DEPLETED"))
         return new AppError("TREASURY_DEPLETED", "Treasury depleted");
     }
@@ -851,6 +1057,7 @@ export class SyndicateService {
     p1.hgetall(treasurySellPricesKey());                              // 7
     p1.hgetall(treasuryBuyFlowKey());                                 // 8
     p1.hgetall(treasurySellFlowKey());                                // 9
+    p1.smembers(syndicateJoinRequestsKey(syndicateId));               // 10
     const r1 = await p1.exec();
     if (!r1) throw new AppError("INTERNAL", "Redis pipeline failed");
 
@@ -864,10 +1071,11 @@ export class SyndicateService {
     const sellPricesRaw   = (r1[7]?.[1] as Record<string, string>) ?? {};
     const buyFlowRaw      = (r1[8]?.[1] as Record<string, string>) ?? {};
     const sellFlowRaw     = (r1[9]?.[1] as Record<string, string>) ?? {};
+    const joinReqIds      = (r1[10]?.[1] as string[]) ?? [];
 
     if (!meta.id) throw new AppError("NO_SUCH_SYNDICATE", "Syndicate not found");
 
-    // ── Pipeline 2: per-member roles, seen, levels ────────────────────────
+    // ── Pipeline 2: per-member roles, seen, levels + join req levels ──────
     const p2 = this.redis.multi();
     if (memberIds.length > 0) {
       p2.hmget(syndicateMemberRolesKey(syndicateId), ...memberIds);     // 0
@@ -875,6 +1083,9 @@ export class SyndicateService {
     }
     for (const uid of memberIds) {
       p2.hget(userLevelKey(uid), "level");                              // 2..N
+    }
+    for (const uid of joinReqIds) {
+      p2.hget(userLevelKey(uid), "level");                              // N..M
     }
     const r2 = await p2.exec();
 
@@ -897,6 +1108,17 @@ export class SyndicateService {
       if (online) onlineCount++;
       return { userId: uid, role, level, lastSeenAtMs, online };
     });
+
+    const actorRole = rolesArr[memberIds.indexOf(userId)] ?? "member";
+    let joinRequests: SyndicateDashboardView["joinRequests"];
+    if (actorRole === "owner" || actorRole === "officer") {
+      const joinReqLevelOffset = levelOffset + memberIds.length;
+      joinRequests = joinReqIds.map((uid, i) => {
+        const levelRaw = r2?.[joinReqLevelOffset + i]?.[1];
+        const level = toInt(levelRaw, 1) || 1;
+        return { userId: uid, requestedAtMs: 0, level };
+      });
+    }
 
     // ── Parse bank items ──────────────────────────────────────────────────
     const bankItems: Record<string, number> = {};
@@ -989,6 +1211,7 @@ export class SyndicateService {
       onlineCount,
       members,
       commodities,
+      joinRequests,
     };
   }
 

@@ -31,6 +31,7 @@ import {
   userAttackCooldownKey,
   userLastSeenKey,
   userLevelKey,
+  userProfileKey,
   userSyndicateIdKey,
   userPendingSyndicateIdKey,
   walletKey,
@@ -189,8 +190,10 @@ export class SyndicateService {
       memberIds,
     );
     const lvls = await this.repo.getMemberLevels(this.redis, memberIds);
+    const names = await this.repo.getMemberUsernames(this.redis, memberIds);
     const membersList: SyndicateMember[] = memberIds.map((uid) => ({
       userId: uid,
+      username: names[uid] ?? "",
       role: (roles[uid] as SyndicateMember["role"]) ?? "member",
       level: lvls[uid] ?? 1,
       lastSeenAtMs: seen[uid] ?? 0,
@@ -204,11 +207,13 @@ export class SyndicateService {
     let joinRequests: SyndicateView["joinRequests"] | undefined;
     if (isMember && (role === "owner" || role === "officer")) {
       const reqs = await this.repo.joinRequests(this.redis, syndicateId);
-      const lvls = await this.repo.getMemberLevels(this.redis, reqs);
+      const jlvls = await this.repo.getMemberLevels(this.redis, reqs);
+      const jnames = await this.repo.getMemberUsernames(this.redis, reqs);
       joinRequests = reqs.map((u) => ({
         userId: u,
+        username: jnames[u] ?? "",
         requestedAtMs: 0,
-        level: lvls[u] ?? 1,
+        level: jlvls[u] ?? 1,
       }));
     }
 
@@ -250,6 +255,7 @@ export class SyndicateService {
           indexAllKey: "ravolo:syndicate:index:all",
           indexPublicKey: "ravolo:syndicate:index:public",
           idempKey: `ravolo:${userId}:idemp:syndicate_create:${cmd.requestId}`,
+          userPendingSyndicateKey: userPendingSyndicateIdKey(userId),
         },
         {
           userId,
@@ -263,7 +269,6 @@ export class SyndicateService {
           idempTtlSec: IDEMPOTENCY_TTL_SEC,
           syndicateKeyPrefix: "ravolo:syndicate:",
           emblemId: cmd.emblemId,
-          userPendingSyndicateKey: userPendingSyndicateIdKey(userId),
         },
       );
       return { syndicateId: res.syndicateId };
@@ -910,8 +915,10 @@ export class SyndicateService {
     const roles = await this.repo.getMemberRoles(this.redis, syndicateId, memberIds);
     const seen = await this.repo.getMemberSeen(this.redis, syndicateId, memberIds);
     const lvls = await this.repo.getMemberLevels(this.redis, memberIds);
+    const names = await this.repo.getMemberUsernames(this.redis, memberIds);
     const members: SyndicateMember[] = memberIds.map((uid) => ({
       userId: uid,
+      username: names[uid] ?? "",
       role: (roles[uid] as SyndicateMember["role"]) ?? "member",
       level: lvls[uid] ?? 1,
       lastSeenAtMs: seen[uid] ?? 0,
@@ -1083,9 +1090,11 @@ export class SyndicateService {
     }
     for (const uid of memberIds) {
       p2.hget(userLevelKey(uid), "level");                              // 2..N
+      p2.hget(userProfileKey(uid), "username");
     }
     for (const uid of joinReqIds) {
-      p2.hget(userLevelKey(uid), "level");                              // N..M
+      p2.hget(userLevelKey(uid), "level");
+      p2.hget(userProfileKey(uid), "username");
     }
     const r2 = await p2.exec();
 
@@ -1102,21 +1111,25 @@ export class SyndicateService {
     const members: DashboardMember[] = memberIds.map((uid, i) => {
       const role = (rolesArr[i] ?? "member") as DashboardMember["role"];
       const lastSeenAtMs = toInt(seenArr[i], 0);
-      const levelRaw = r2?.[levelOffset + i]?.[1];
+      const levelRaw = r2?.[levelOffset + (i * 2)]?.[1];
+      const nameRaw = r2?.[levelOffset + (i * 2) + 1]?.[1];
       const level = toInt(levelRaw, 1) || 1;
+      const username = typeof nameRaw === "string" ? nameRaw : `User ${uid.slice(0, 8)}`;
       const online = now - lastSeenAtMs < ONLINE_THRESHOLD_MS;
       if (online) onlineCount++;
-      return { userId: uid, role, level, lastSeenAtMs, online };
+      return { userId: uid, username, role, level, lastSeenAtMs, online };
     });
 
     const actorRole = rolesArr[memberIds.indexOf(userId)] ?? "member";
     let joinRequests: SyndicateDashboardView["joinRequests"];
     if (actorRole === "owner" || actorRole === "officer") {
-      const joinReqLevelOffset = levelOffset + memberIds.length;
+      const joinReqOffset = levelOffset + memberIds.length * 2;
       joinRequests = joinReqIds.map((uid, i) => {
-        const levelRaw = r2?.[joinReqLevelOffset + i]?.[1];
+        const levelRaw = r2?.[joinReqOffset + (i * 2)]?.[1];
+        const nameRaw = r2?.[joinReqOffset + (i * 2) + 1]?.[1];
         const level = toInt(levelRaw, 1) || 1;
-        return { userId: uid, requestedAtMs: 0, level };
+        const username = typeof nameRaw === "string" ? nameRaw : `User ${uid.slice(0, 8)}`;
+        return { userId: uid, username, requestedAtMs: 0, level };
       });
     }
 

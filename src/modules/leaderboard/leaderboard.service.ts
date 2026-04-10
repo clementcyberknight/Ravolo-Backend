@@ -4,6 +4,7 @@ import { getTopEntries, getMemberRank } from "./leaderboard.repository.js";
 import {
   syndicateMetaKey,
   syndicateIndexAllKey,
+  userProfileKey,
 } from "../../infrastructure/redis/keys.js";
 
 const DEFAULT_LIMIT = 20;
@@ -29,7 +30,7 @@ export class LeaderboardService {
         if (meta) name = meta;
       } else {
         // Player: use profile username if available
-        const profile = await this.redis.hget(`ravolo:user:${e.id}:profile`, "username");
+        const profile = await this.redis.hget(userProfileKey(e.id), "username");
         if (profile) name = profile;
       }
 

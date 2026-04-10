@@ -15,6 +15,7 @@ import {
   syndicateMetaKey,
   syndicateShieldExpiresAtKey,
   userLevelKey,
+  userProfileKey,
 } from "../../infrastructure/redis/keys.js";
 
 export class SyndicateRepository {
@@ -43,6 +44,21 @@ export class SyndicateRepository {
     for (let i = 0; i < userIds.length; i++) {
       const v = res[i];
       if (typeof v === "string" && v) out[userIds[i]!] = v;
+    }
+    return out;
+  }
+
+  async getMemberUsernames(redis: Redis, userIds: string[]): Promise<Record<string, string>> {
+    if (userIds.length === 0) return {};
+    const pipe = redis.multi();
+    for (const uid of userIds) {
+      pipe.hget(userProfileKey(uid), "username");
+    }
+    const res = await pipe.exec();
+    const out: Record<string, string> = {};
+    for (let i = 0; i < userIds.length; i++) {
+      const raw = res?.[i]?.[1];
+      out[userIds[i]!] = typeof raw === "string" ? raw : `User ${userIds[i]!.slice(0, 8)}`;
     }
     return out;
   }

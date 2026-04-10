@@ -17,6 +17,7 @@ export type SyndicateSummary = {
 
 export type SyndicateMember = {
   userId: string;
+  username: string;
   role: SyndicateRole;
   level: number;
   lastSeenAtMs: number;
@@ -25,7 +26,7 @@ export type SyndicateMember = {
 export type SyndicateView = SyndicateSummary & {
   ownerId: string;
   createdAtMs: number;
-  joinRequests?: { userId: string; requestedAtMs: number; level: number }[];
+  joinRequests?: { userId: string; username: string; requestedAtMs: number; level: number }[];
   membersList: SyndicateMember[];
 };
 
@@ -166,6 +167,7 @@ export type DashboardActiveBoost = {
 
 export type DashboardMember = {
   userId: string;
+  username: string;
   role: SyndicateRole;
   level: number;
   lastSeenAtMs: number;
@@ -191,5 +193,5 @@ export type SyndicateDashboardView = {
   onlineCount: number;
   members: DashboardMember[];
   commodities: CommodityStat[];
-  joinRequests?: { userId: string; requestedAtMs: number; level: number }[];
+  joinRequests?: { userId: string; username: string; requestedAtMs: number; level: number }[];
 };

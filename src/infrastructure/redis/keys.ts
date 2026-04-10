@@ -42,6 +42,10 @@ export function userLevelKey(userId: string): string {
   return `ravolo:${userTag(userId)}:lvl`;
 }
 
+export function userProfileKey(userId: string): string {
+  return `ravolo:${userTag(userId)}:profile`;
+}
+
 export function plantIdempotencyKey(userId: string, requestId: string): string {
   return `ravolo:${userTag(userId)}:idemp:plant:${requestId}`;
 }

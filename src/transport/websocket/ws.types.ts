@@ -27,6 +27,11 @@ export type WsInboundMessage =
   | { type: "SYNDICATE_CHAT_LIST"; payload: unknown }
   | { type: "LEAVE_SYNDICATE"; payload: unknown }
   | { type: "DISBAND_SYNDICATE"; payload: unknown }
+  | { type: "KICK_MEMBER"; payload: unknown }
+  | { type: "PROMOTE_MEMBER"; payload: unknown }
+  | { type: "DEMOTE_MEMBER"; payload: unknown }
+  | { type: "CANCEL_JOIN_REQUEST"; payload: unknown }
+  | { type: "REJECT_REQUEST"; payload: unknown }
   | { type: "VIEW_SYNDICATE_MEMBER"; payload: unknown }
   | { type: "VIEW_GOLD_BANK"; payload: unknown }
   | { type: "VIEW_COMMODITY_BANK"; payload: unknown }
@@ -65,6 +70,11 @@ export type WsOutboundMessage =
   | { type: "SYNDICATE_CHAT_LIST_OK"; data: unknown }
   | { type: "LEAVE_SYNDICATE_OK"; data: unknown }
   | { type: "DISBAND_SYNDICATE_OK"; data: unknown }
+  | { type: "KICK_MEMBER_OK"; data: unknown }
+  | { type: "PROMOTE_MEMBER_OK"; data: unknown }
+  | { type: "DEMOTE_MEMBER_OK"; data: unknown }
+  | { type: "CANCEL_JOIN_REQUEST_OK"; data: unknown }
+  | { type: "REJECT_REQUEST_OK"; data: unknown }
   | { type: "VIEW_SYNDICATE_MEMBER_OK"; data: unknown }
   | { type: "VIEW_GOLD_BANK_OK"; data: unknown }
   | { type: "VIEW_COMMODITY_BANK_OK"; data: unknown }

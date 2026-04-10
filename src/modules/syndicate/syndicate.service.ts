@@ -31,7 +31,9 @@ import {
   userAttackCooldownKey,
   userLastSeenKey,
   userLevelKey,
+  userProfileKey,
   userSyndicateIdKey,
+  userPendingSyndicateIdKey,
   walletKey,
   syndicateHoldingsKey,
   treasurySellPricesKey,
@@ -47,18 +49,16 @@ import {
   redisSyndicateCreate,
   redisSyndicateDeposit,
   redisSyndicateIdolContribute,
+  redisSyndicateKickMember,
   redisSyndicateLeaveOrDisband,
+  redisSyndicatePromoteDemote,
+  redisSyndicateRemoveJoinRequest,
   redisSyndicateRequestJoin,
 } from "../../infrastructure/redis/commands.js";
 import { AppError } from "../../shared/errors/appError.js";
 import { sellPayoutGold, toSafeGold } from "../../shared/utils/gold.js";
-import {
-  isTreasurySellable,
-  produceBasePriceMicro,
-  resolveBaseMicro,
-} from "../market/market.catalog.js";
+import { isTreasurySellable, produceBasePriceMicro, resolveBaseMicro } from "../market/market.catalog.js";
 import { getEventMultiplier } from "../ai-events/event.service.js";
-import { getSyndicateIdolTradeMultipliers } from "./syndicateIdol.effects.js";
 import { OnboardingService } from "../onboarding/onboarding.service.js";
 import { SyndicateRepository } from "./syndicate.repository.js";
 import type {
@@ -67,14 +67,19 @@ import type {
   BankSellCommand,
   BankSellResult,
   BuyShieldCommand,
+  CancelJoinRequestCommand,
   CommodityStat,
   CreateSyndicateCommand,
   DashboardMember,
+  DemoteMemberCommand,
   DepositBankCommand,
   DisbandSyndicateCommand,
   IdolContributeCommand,
+  KickMemberCommand,
   LeaveSyndicateCommand,
   ListSyndicatesQuery,
+  PromoteMemberCommand,
+  RejectJoinRequestCommand,
   RequestJoinCommand,
   SyndicateChatSendCommand,
   SyndicateDashboardQuery,
@@ -91,11 +96,16 @@ import {
   attackSyndicateSchema,
   bankSellSchema,
   buyShieldSchema,
+  cancelJoinRequestSchema,
   createSyndicateSchema,
+  demoteMemberSchema,
   depositBankSchema,
   disbandSyndicateSchema,
   idolContributeSchema,
+  kickMemberSchema,
   leaveSyndicateSchema,
+  promoteMemberSchema,
+  rejectJoinRequestSchema,
   requestJoinSchema,
   syndicateChatSendSchema,
   syndicateDashboardSchema,
@@ -103,6 +113,7 @@ import {
   viewContributionSchema,
   viewSyndicateMemberSchema,
 } from "./syndicate.validator.js";
+import { getSyndicateIdolTradeMultipliers } from "./syndicateIdol.effects.js";
 
 const CHAT_MAX = 200;
 
@@ -180,8 +191,10 @@ export class SyndicateService {
       memberIds,
     );
     const lvls = await this.repo.getMemberLevels(this.redis, memberIds);
+    const names = await this.repo.getMemberUsernames(this.redis, memberIds);
     const membersList: SyndicateMember[] = memberIds.map((uid) => ({
       userId: uid,
+      username: names[uid] ?? "",
       role: (roles[uid] as SyndicateMember["role"]) ?? "member",
       level: lvls[uid] ?? 1,
       lastSeenAtMs: seen[uid] ?? 0,
@@ -195,7 +208,14 @@ export class SyndicateService {
     let joinRequests: SyndicateView["joinRequests"] | undefined;
     if (isMember && (role === "owner" || role === "officer")) {
       const reqs = await this.repo.joinRequests(this.redis, syndicateId);
-      joinRequests = reqs.map((u) => ({ userId: u, requestedAtMs: 0 }));
+      const jlvls = await this.repo.getMemberLevels(this.redis, reqs);
+      const jnames = await this.repo.getMemberUsernames(this.redis, reqs);
+      joinRequests = reqs.map((u) => ({
+        userId: u,
+        username: jnames[u] ?? "",
+        requestedAtMs: 0,
+        level: jlvls[u] ?? 1,
+      }));
     }
 
     return {
@@ -236,6 +256,7 @@ export class SyndicateService {
           indexAllKey: "ravolo:syndicate:index:all",
           indexPublicKey: "ravolo:syndicate:index:public",
           idempKey: `ravolo:${userId}:idemp:syndicate_create:${cmd.requestId}`,
+          userPendingSyndicateKey: userPendingSyndicateIdKey(userId),
         },
         {
           userId,
@@ -278,13 +299,9 @@ export class SyndicateService {
           idempKey: `ravolo:${userId}:idemp:syndicate_join_req:${cmd.requestId}`,
           userLevelKey: userLevelKey(userId),
           userWalletKey: walletKey(userId),
+          userPendingSyndicateKey: userPendingSyndicateIdKey(userId),
         },
-        {
-          userId,
-          nowMs: nowMs(),
-          idempTtlSec: IDEMPOTENCY_TTL_SEC,
-          maxMembers: MAX_SYNDICATE_MEMBERS,
-        },
+        { userId, nowMs: nowMs(), idempTtlSec: IDEMPOTENCY_TTL_SEC, maxMembers: MAX_SYNDICATE_MEMBERS },
       );
     } catch (e) {
       throw this.mapLuaError(e);
@@ -313,6 +330,7 @@ export class SyndicateService {
           rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
           targetUserSyndicateKey: userSyndicateIdKey(cmd.userId),
           idempKey: `ravolo:${userId}:idemp:syndicate_accept:${cmd.requestId}`,
+          targetUserPendingSyndicateKey: userPendingSyndicateIdKey(cmd.userId),
         },
         {
           actorUserId: userId,
@@ -610,6 +628,174 @@ export class SyndicateService {
     return { ok: true };
   }
 
+  async cancelJoinRequest(
+    userId: string,
+    raw: unknown,
+  ): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = cancelJoinRequestSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid cancel join request payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as CancelJoinRequestCommand;
+
+    try {
+      await redisSyndicateRemoveJoinRequest(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          joinReqKey: syndicateJoinRequestsKey(cmd.syndicateId),
+          targetUserPendingSyndicateKey: userPendingSyndicateIdKey(userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_cancel_join:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: userId,
+          syndicateId: cmd.syndicateId,
+          mode: "cancel",
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
+  async rejectJoinRequest(
+    userId: string,
+    raw: unknown,
+  ): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = rejectJoinRequestSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid reject join request payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as RejectJoinRequestCommand;
+
+    try {
+      await redisSyndicateRemoveJoinRequest(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          joinReqKey: syndicateJoinRequestsKey(cmd.syndicateId),
+          targetUserPendingSyndicateKey: userPendingSyndicateIdKey(cmd.userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_reject_join:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: cmd.userId,
+          syndicateId: cmd.syndicateId,
+          mode: "reject",
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
+  async kickMember(userId: string, raw: unknown): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = kickMemberSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid kick member payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as KickMemberCommand;
+
+    try {
+      await redisSyndicateKickMember(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          membersKey: syndicateMembersKey(cmd.syndicateId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          targetUserSyndicateKey: userSyndicateIdKey(cmd.userId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_kick:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: cmd.userId,
+          syndicateId: cmd.syndicateId,
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
+  async promoteMember(userId: string, raw: unknown): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = promoteMemberSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid promote member payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as PromoteMemberCommand;
+
+    try {
+      await redisSyndicatePromoteDemote(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_promote:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: cmd.userId,
+          syndicateId: cmd.syndicateId,
+          mode: "promote",
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+          maxAdmins: 10,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
+  async demoteMember(userId: string, raw: unknown): Promise<{ ok: true }> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = demoteMemberSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid demote member payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as DemoteMemberCommand;
+
+    try {
+      await redisSyndicatePromoteDemote(
+        this.redis,
+        {
+          actorUserSyndicateKey: userSyndicateIdKey(userId),
+          rolesKey: syndicateMemberRolesKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:syndicate_demote:${cmd.requestId}`,
+        },
+        {
+          actorUserId: userId,
+          targetUserId: cmd.userId,
+          syndicateId: cmd.syndicateId,
+          mode: "demote",
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+          maxAdmins: 10,
+        },
+      );
+    } catch (e) {
+      throw this.mapLuaError(e);
+    }
+    return { ok: true };
+  }
+
   async disband(userId: string, raw: unknown): Promise<{ ok: true }> {
     await this.onboarding.ensureOnboarded(userId);
     const parsed = disbandSyndicateSchema.safeParse(raw);
@@ -662,6 +848,8 @@ export class SyndicateService {
         return new AppError("NOT_AUTHORIZED", "Not authorized");
       if (msg.includes("ERR_JOIN_REQUEST_MISSING"))
         return new AppError("JOIN_REQUEST_MISSING", "Join request missing");
+      if (msg.includes("ERR_ALREADY_REQUESTED"))
+        return new AppError("ALREADY_REQUESTED", "Already have a pending join request");
       if (msg.includes("ERR_TARGET_ALREADY_IN_SYNDICATE"))
         return new AppError(
           "TARGET_ALREADY_IN_SYNDICATE",
@@ -687,6 +875,20 @@ export class SyndicateService {
         return new AppError("INSUFFICIENT_INV", "Insufficient inventory");
       if (msg.includes("ERR_BAD_ARGS"))
         return new AppError("BAD_REQUEST", "Invalid request");
+      if (msg.includes("ERR_CANNOT_KICK_SELF"))
+        return new AppError("BAD_REQUEST", "Cannot kick self");
+      if (msg.includes("ERR_TARGET_NOT_IN_SYNDICATE"))
+        return new AppError("BAD_REQUEST", "Target not in syndicate");
+      if (msg.includes("ERR_CANNOT_KICK_OWNER"))
+        return new AppError("BAD_REQUEST", "Cannot kick owner");
+      if (msg.includes("ERR_ALREADY_ADMIN"))
+        return new AppError("BAD_REQUEST", "Member is already an admin");
+      if (msg.includes("ERR_MAX_ADMINS_REACHED"))
+        return new AppError("MAX_ADMINS_REACHED", "Max 10 admins allowed");
+      if (msg.includes("ERR_ALREADY_MEMBER"))
+        return new AppError("BAD_REQUEST", "Target is already a member");
+      if (msg.includes("ERR_CANNOT_DEMOTE_OWNER"))
+        return new AppError("BAD_REQUEST", "Cannot demote owner");
       if (msg.includes("ERR_TREASURY_DEPLETED"))
         return new AppError("TREASURY_DEPLETED", "Treasury depleted");
     }
@@ -717,19 +919,13 @@ export class SyndicateService {
       throw new AppError("NOT_MEMBER" as never, "Not a member");
 
     const memberIds = await this.repo.getMemberIds(this.redis, syndicateId);
-    const roles = await this.repo.getMemberRoles(
-      this.redis,
-      syndicateId,
-      memberIds,
-    );
-    const seen = await this.repo.getMemberSeen(
-      this.redis,
-      syndicateId,
-      memberIds,
-    );
+    const roles = await this.repo.getMemberRoles(this.redis, syndicateId, memberIds);
+    const seen = await this.repo.getMemberSeen(this.redis, syndicateId, memberIds);
     const lvls = await this.repo.getMemberLevels(this.redis, memberIds);
+    const names = await this.repo.getMemberUsernames(this.redis, memberIds);
     const members: SyndicateMember[] = memberIds.map((uid) => ({
       userId: uid,
+      username: names[uid] ?? "",
       role: (roles[uid] as SyndicateMember["role"]) ?? "member",
       level: lvls[uid] ?? 1,
       lastSeenAtMs: seen[uid] ?? 0,
@@ -737,7 +933,10 @@ export class SyndicateService {
     return { members };
   }
 
-  async viewGoldBank(userId: string, raw: unknown): Promise<{ gold: number }> {
+  async viewGoldBank(
+    userId: string,
+    raw: unknown,
+  ): Promise<{ gold: number }> {
     await this.onboarding.ensureOnboarded(userId);
     const parsed = viewBankSchema.safeParse(raw);
     if (!parsed.success)
@@ -847,10 +1046,7 @@ export class SyndicateService {
     return { messages: msgs };
   }
 
-  async dashboard(
-    userId: string,
-    raw: unknown,
-  ): Promise<SyndicateDashboardView> {
+  async dashboard(userId: string, raw: unknown): Promise<SyndicateDashboardView> {
     await this.onboarding.ensureOnboarded(userId);
     const parsed = syndicateDashboardSchema.safeParse(raw);
     if (!parsed.success)
@@ -865,48 +1061,56 @@ export class SyndicateService {
 
     // ── Pipeline 1: all syndicate-scoped + global market reads ────────────
     const p1 = this.redis.multi();
-    p1.hgetall(syndicateMetaKey(syndicateId)); // 0
-    p1.get(syndicateBankGoldKey(syndicateId)); // 1
-    p1.hgetall(syndicateBankItemsKey(syndicateId)); // 2
-    p1.get(syndicateShieldExpiresAtKey(syndicateId)); // 3
-    p1.hgetall(syndicateIdolKey(syndicateId)); // 4
-    p1.smembers(syndicateMembersKey(syndicateId)); // 5
-    p1.hgetall(syndicateContributionItemsKey(syndicateId)); // 6
-    p1.hgetall(treasurySellPricesKey()); // 7
-    p1.hgetall(treasuryBuyFlowKey()); // 8
-    p1.hgetall(treasurySellFlowKey()); // 9
+    p1.hgetall(syndicateMetaKey(syndicateId));                        // 0
+    p1.get(syndicateBankGoldKey(syndicateId));                        // 1
+    p1.hgetall(syndicateBankItemsKey(syndicateId));                   // 2
+    p1.get(syndicateShieldExpiresAtKey(syndicateId));                 // 3
+    p1.hgetall(syndicateIdolKey(syndicateId));                        // 4
+    p1.smembers(syndicateMembersKey(syndicateId));                    // 5
+    p1.hgetall(syndicateContributionItemsKey(syndicateId));           // 6
+    p1.hgetall(treasurySellPricesKey());                              // 7
+    p1.hgetall(treasuryBuyFlowKey());                                 // 8
+    p1.hgetall(treasurySellFlowKey());                                // 9
+    p1.smembers(syndicateJoinRequestsKey(syndicateId));               // 10
     const r1 = await p1.exec();
     if (!r1) throw new AppError("INTERNAL", "Redis pipeline failed");
 
-    const meta = (r1[0]?.[1] as Record<string, string>) ?? {};
+    const meta    = (r1[0]?.[1] as Record<string, string>) ?? {};
     const bankGoldRaw = r1[1]?.[1] as string | null;
     const bankItemsRaw = (r1[2]?.[1] as Record<string, string>) ?? {};
-    const shieldRaw = r1[3]?.[1] as string | null;
-    const idolRaw = (r1[4]?.[1] as Record<string, string>) ?? {};
-    const memberIds = (r1[5]?.[1] as string[]) ?? [];
+    const shieldRaw   = r1[3]?.[1] as string | null;
+    const idolRaw     = (r1[4]?.[1] as Record<string, string>) ?? {};
+    const memberIds   = (r1[5]?.[1] as string[]) ?? [];
     const contribItemsRaw = (r1[6]?.[1] as Record<string, string>) ?? {};
-    const sellPricesRaw = (r1[7]?.[1] as Record<string, string>) ?? {};
-    const buyFlowRaw = (r1[8]?.[1] as Record<string, string>) ?? {};
-    const sellFlowRaw = (r1[9]?.[1] as Record<string, string>) ?? {};
+    const sellPricesRaw   = (r1[7]?.[1] as Record<string, string>) ?? {};
+    const buyFlowRaw      = (r1[8]?.[1] as Record<string, string>) ?? {};
+    const sellFlowRaw     = (r1[9]?.[1] as Record<string, string>) ?? {};
+    const joinReqIds      = (r1[10]?.[1] as string[]) ?? [];
 
-    if (!meta.id)
-      throw new AppError("NO_SUCH_SYNDICATE", "Syndicate not found");
+    if (!meta.id) throw new AppError("NO_SUCH_SYNDICATE", "Syndicate not found");
 
-    // ── Pipeline 2: per-member roles, seen, levels ────────────────────────
+    // ── Pipeline 2: per-member roles, seen, levels + join req levels ──────
     const p2 = this.redis.multi();
     if (memberIds.length > 0) {
-      p2.hmget(syndicateMemberRolesKey(syndicateId), ...memberIds); // 0
-      p2.hmget(syndicateMemberSeenKey(syndicateId), ...memberIds); // 1
+      p2.hmget(syndicateMemberRolesKey(syndicateId), ...memberIds);     // 0
+      p2.hmget(syndicateMemberSeenKey(syndicateId), ...memberIds);      // 1
     }
     for (const uid of memberIds) {
-      p2.hget(userLevelKey(uid), "level"); // 2..N
+      p2.hget(userLevelKey(uid), "level");                              // 2..N
+      p2.hget(userProfileKey(uid), "username");
+    }
+    for (const uid of joinReqIds) {
+      p2.hget(userLevelKey(uid), "level");
+      p2.hget(userProfileKey(uid), "username");
     }
     const r2 = await p2.exec();
 
-    const rolesArr =
-      memberIds.length > 0 ? ((r2?.[0]?.[1] as (string | null)[]) ?? []) : [];
-    const seenArr =
-      memberIds.length > 0 ? ((r2?.[1]?.[1] as (string | null)[]) ?? []) : [];
+    const rolesArr = memberIds.length > 0
+      ? (r2?.[0]?.[1] as (string | null)[]) ?? []
+      : [];
+    const seenArr = memberIds.length > 0
+      ? (r2?.[1]?.[1] as (string | null)[]) ?? []
+      : [];
     const levelOffset = memberIds.length > 0 ? 2 : 0;
 
     // ── Build member list ─────────────────────────────────────────────────
@@ -914,12 +1118,27 @@ export class SyndicateService {
     const members: DashboardMember[] = memberIds.map((uid, i) => {
       const role = (rolesArr[i] ?? "member") as DashboardMember["role"];
       const lastSeenAtMs = toInt(seenArr[i], 0);
-      const levelRaw = r2?.[levelOffset + i]?.[1];
+      const levelRaw = r2?.[levelOffset + (i * 2)]?.[1];
+      const nameRaw = r2?.[levelOffset + (i * 2) + 1]?.[1];
       const level = toInt(levelRaw, 1) || 1;
+      const username = typeof nameRaw === "string" ? nameRaw : `User ${uid.slice(0, 8)}`;
       const online = now - lastSeenAtMs < ONLINE_THRESHOLD_MS;
       if (online) onlineCount++;
-      return { userId: uid, role, level, lastSeenAtMs, online };
+      return { userId: uid, username, role, level, lastSeenAtMs, online };
     });
+
+    const actorRole = rolesArr[memberIds.indexOf(userId)] ?? "member";
+    let joinRequests: SyndicateDashboardView["joinRequests"];
+    if (actorRole === "owner" || actorRole === "officer") {
+      const joinReqOffset = levelOffset + memberIds.length * 2;
+      joinRequests = joinReqIds.map((uid, i) => {
+        const levelRaw = r2?.[joinReqOffset + (i * 2)]?.[1];
+        const nameRaw = r2?.[joinReqOffset + (i * 2) + 1]?.[1];
+        const level = toInt(levelRaw, 1) || 1;
+        const username = typeof nameRaw === "string" ? nameRaw : `User ${uid.slice(0, 8)}`;
+        return { userId: uid, username, requestedAtMs: 0, level };
+      });
+    }
 
     // ── Parse bank items ──────────────────────────────────────────────────
     const bankItems: Record<string, number> = {};
@@ -946,61 +1165,34 @@ export class SyndicateService {
     // ── Build commodity stats ─────────────────────────────────────────────
     const commodities: CommodityStat[] = [];
     for (const [itemId, quantity] of Object.entries(bankItems)) {
-      const sellPriceMicro =
-        toInt(sellPricesRaw[itemId], 0) ||
-        Math.max(1, Math.round(resolveBaseMicro(itemId) * SPREAD_SELL_FACTOR));
-      const sellPriceGold = Math.floor(
-        (sellPriceMicro * quantity) / PRICE_MICRO_PER_GOLD,
-      );
-      const monopolyPct = Math.min(
-        100,
-        (quantity / SCARCITY_TOTAL_UNITS) * 100,
-      );
+      const sellPriceMicro = toInt(sellPricesRaw[itemId], 0)
+        || Math.max(1, Math.round(resolveBaseMicro(itemId) * SPREAD_SELL_FACTOR));
+      const sellPriceGold = Math.floor((sellPriceMicro * quantity) / PRICE_MICRO_PER_GOLD);
+      const monopolyPct = Math.min(100, (quantity / SCARCITY_TOTAL_UNITS) * 100);
 
       // Crash %: simulate dumping all bankQty into the sell flow
       const buyFlow = Number(buyFlowRaw[itemId]) || 0;
       const sellFlow = Number(sellFlowRaw[itemId]) || 0;
-      const curDemand = Math.min(
-        PRICE_DEMAND_CLAMP[1],
-        Math.max(PRICE_DEMAND_CLAMP[0], (buyFlow + 1) / (sellFlow + 1)),
-      );
+      const curDemand = Math.min(PRICE_DEMAND_CLAMP[1],
+        Math.max(PRICE_DEMAND_CLAMP[0], (buyFlow + 1) / (sellFlow + 1)));
       const curCirc = buyFlow + sellFlow;
-      const curScarcity = Math.min(
-        PRICE_SCARCITY_CLAMP[1],
-        Math.max(
-          PRICE_SCARCITY_CLAMP[0],
-          SCARCITY_TOTAL_UNITS / Math.max(1, curCirc),
-        ),
-      );
+      const curScarcity = Math.min(PRICE_SCARCITY_CLAMP[1],
+        Math.max(PRICE_SCARCITY_CLAMP[0], SCARCITY_TOTAL_UNITS / Math.max(1, curCirc)));
       const newSellFlow = sellFlow + quantity;
-      const newDemand = Math.min(
-        PRICE_DEMAND_CLAMP[1],
-        Math.max(PRICE_DEMAND_CLAMP[0], (buyFlow + 1) / (newSellFlow + 1)),
-      );
+      const newDemand = Math.min(PRICE_DEMAND_CLAMP[1],
+        Math.max(PRICE_DEMAND_CLAMP[0], (buyFlow + 1) / (newSellFlow + 1)));
       const newCirc = buyFlow + newSellFlow;
-      const newScarcity = Math.min(
-        PRICE_SCARCITY_CLAMP[1],
-        Math.max(
-          PRICE_SCARCITY_CLAMP[0],
-          SCARCITY_TOTAL_UNITS / Math.max(1, newCirc),
-        ),
-      );
+      const newScarcity = Math.min(PRICE_SCARCITY_CLAMP[1],
+        Math.max(PRICE_SCARCITY_CLAMP[0], SCARCITY_TOTAL_UNITS / Math.max(1, newCirc)));
       const curFactor = curDemand * curScarcity;
       const newFactor = newDemand * newScarcity;
-      const crashPct =
-        curFactor > 0
-          ? Math.max(
-              0,
-              Math.min(100, ((curFactor - newFactor) / curFactor) * 100),
-            )
-          : 0;
+      const crashPct = curFactor > 0
+        ? Math.max(0, Math.min(100, ((curFactor - newFactor) / curFactor) * 100))
+        : 0;
 
       // Member share percentages for this commodity
       const itemContribs = contribByItem[itemId] ?? {};
-      const totalContrib = Object.values(itemContribs).reduce(
-        (s, v) => s + v,
-        0,
-      );
+      const totalContrib = Object.values(itemContribs).reduce((s, v) => s + v, 0);
       const memberShares: Record<string, number> = {};
       if (totalContrib > 0) {
         for (const [uid, qty] of Object.entries(itemContribs)) {
@@ -1023,10 +1215,8 @@ export class SyndicateService {
     const shieldExpiresAtMs = toInt(shieldRaw, 0);
     const idolLevel = toInt(idolRaw.level, 0);
     const idolStatusRaw = idolRaw.status ?? "none";
-    const idolStatus =
-      idolStatusRaw === "blessed" || idolStatusRaw === "punished"
-        ? idolStatusRaw
-        : ("none" as const);
+    const idolStatus = (idolStatusRaw === "blessed" || idolStatusRaw === "punished")
+      ? idolStatusRaw : "none" as const;
     const blessedUntilMs = toInt(idolRaw.blessedUntilMs, 0);
     const punishedUntilMs = toInt(idolRaw.punishedUntilMs, 0);
 
@@ -1035,18 +1225,13 @@ export class SyndicateService {
     return {
       name: meta.name ?? "",
       emblemId: meta.emblemId ?? "emblem:default",
-      activeBoost: {
-        shieldExpiresAtMs,
-        idolLevel,
-        idolStatus,
-        blessedUntilMs,
-        punishedUntilMs,
-      },
+      activeBoost: { shieldExpiresAtMs, idolLevel, idolStatus, blessedUntilMs, punishedUntilMs },
       totalGold,
       totalMembers: memberIds.length,
       onlineCount,
       members,
       commodities,
+      joinRequests,
     };
   }
 

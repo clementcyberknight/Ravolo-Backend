@@ -7,6 +7,7 @@
 -- 5 rolesKey
 -- 6 targetUserSyndicateKey
 -- 7 idempKey
+-- 8 targetUserPendingSyndicateKey
 --
 -- ARGV:
 -- 1 actorUserId
@@ -52,6 +53,7 @@ if count >= maxMembers then
 end
 
 redis.call('SREM', KEYS[3], ARGV[2])
+redis.call('DEL', KEYS[8])
 redis.call('SADD', KEYS[4], ARGV[2])
 redis.call('HSET', KEYS[5], ARGV[2], 'member')
 redis.call('SET', KEYS[6], metaId)

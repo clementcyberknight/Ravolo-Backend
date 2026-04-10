@@ -42,6 +42,10 @@ export function userLevelKey(userId: string): string {
   return `ravolo:${userTag(userId)}:lvl`;
 }
 
+export function userProfileKey(userId: string): string {
+  return `ravolo:${userTag(userId)}:profile`;
+}
+
 export function plantIdempotencyKey(userId: string, requestId: string): string {
   return `ravolo:${userTag(userId)}:idemp:plant:${requestId}`;
 }
@@ -206,6 +210,10 @@ export function aiEventHistoryKey(): string {
 
 export function userSyndicateIdKey(userId: string): string {
   return `ravolo:${userTag(userId)}:syndicate_id`;
+}
+
+export function userPendingSyndicateIdKey(userId: string): string {
+  return `ravolo:${userTag(userId)}:syndicate_pending_id`;
 }
 
 export function userLastSeenKey(userId: string): string {

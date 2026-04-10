@@ -1,11 +1,20 @@
+import type { Redis } from "ioredis";
 import { generateUsername } from "unique-username-generator";
 import { ACHIEVEMENT_NEW_PLAYER } from "../../config/achievements.js";
+import { userProfileKey } from "../../infrastructure/redis/keys.js";
 import { getSupabase } from "../../infrastructure/supabase/client.js";
 import { AppError } from "../../shared/errors/appError.js";
 import type { FarmerProfile } from "./profile.types.js";
 
 export class ProfileService {
   private readonly supabase = getSupabase();
+
+  constructor(private readonly redis?: Redis) {}
+
+  private async cacheProfile(profile: FarmerProfile): Promise<void> {
+    if (!this.redis) return;
+    await this.redis.hset(userProfileKey(profile.id), "username", profile.username);
+  }
 
   async findByWallet(walletAddress: string): Promise<FarmerProfile | null> {
     const { data: profile, error } = await this.supabase
@@ -18,7 +27,9 @@ export class ProfileService {
     if (!profile) return null;
 
     const achievements = await this.listAchievements(profile.id);
-    return this.mapRow(profile, achievements);
+    const result = this.mapRow(profile, achievements);
+    await this.cacheProfile(result);
+    return result;
   }
 
   async findById(userId: string): Promise<FarmerProfile | null> {
@@ -32,7 +43,9 @@ export class ProfileService {
     if (!profile) return null;
 
     const achievements = await this.listAchievements(profile.id);
-    return this.mapRow(profile, achievements);
+    const result = this.mapRow(profile, achievements);
+    await this.cacheProfile(result);
+    return result;
   }
 
   /**
@@ -67,7 +80,9 @@ export class ProfileService {
         throw new AppError("DATABASE", achErr.message);
       }
 
-      return this.mapRow(inserted, [ACHIEVEMENT_NEW_PLAYER]);
+      const result = this.mapRow(inserted, [ACHIEVEMENT_NEW_PLAYER]);
+      await this.cacheProfile(result);
+      return result;
     }
 
     throw new AppError(
@@ -92,7 +107,9 @@ export class ProfileService {
     }
 
     const achievements = await this.listAchievements(data.id);
-    return this.mapRow(data, achievements);
+    const result = this.mapRow(data, achievements);
+    await this.cacheProfile(result);
+    return result;
   }
 
   private async listAchievements(userId: string): Promise<string[]> {

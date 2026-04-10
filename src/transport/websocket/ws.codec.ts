@@ -62,6 +62,11 @@ function normalizeInbound(o: unknown): WsInboundMessage | null {
     type === "SYNDICATE_CHAT_LIST" ||
     type === "LEAVE_SYNDICATE" ||
     type === "DISBAND_SYNDICATE" ||
+    type === "KICK_MEMBER" ||
+    type === "PROMOTE_MEMBER" ||
+    type === "DEMOTE_MEMBER" ||
+    type === "CANCEL_JOIN_REQUEST" ||
+    type === "REJECT_REQUEST" ||
     type === "VIEW_SYNDICATE_MEMBER" ||
     type === "VIEW_GOLD_BANK" ||
     type === "VIEW_COMMODITY_BANK" ||

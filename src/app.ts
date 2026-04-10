@@ -56,7 +56,7 @@ export async function startApp(): Promise<AppInstance> {
   const loan = new LoanService(redis);
   const animals = new AnimalService(redis);
   const crafting = new CraftingService(redis);
-  const profile = new ProfileService();
+  const profile = new ProfileService(redis);
   const onboarding = new OnboardingService(redis);
   const auth = new AuthService(redis, profile, onboarding);
   const userActions = new UserActionService(redis);

@@ -113,6 +113,91 @@ export async function handleAcceptRequest(
   }
 }
 
+export async function handleKickMember(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.kickMember(userId, payload);
+    userActions.log(userId, "KICK_MEMBER", payload);
+    send(ws, { type: "KICK_MEMBER_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "kick member failed");
+  }
+}
+
+export async function handlePromoteMember(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.promoteMember(userId, payload);
+    userActions.log(userId, "PROMOTE_MEMBER", payload);
+    send(ws, { type: "PROMOTE_MEMBER_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "promote member failed");
+  }
+}
+
+export async function handleDemoteMember(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.demoteMember(userId, payload);
+    userActions.log(userId, "DEMOTE_MEMBER", payload);
+    send(ws, { type: "DEMOTE_MEMBER_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "demote member failed");
+  }
+}
+
+export async function handleCancelJoinRequest(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.cancelJoinRequest(userId, payload);
+    userActions.log(userId, "CANCEL_JOIN_REQUEST", payload);
+    send(ws, { type: "CANCEL_JOIN_REQUEST_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "cancel join request failed");
+  }
+}
+
+export async function handleRejectRequest(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.rejectJoinRequest(userId, payload);
+    userActions.log(userId, "REJECT_REQUEST", payload);
+    send(ws, { type: "REJECT_REQUEST_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "reject request failed");
+  }
+}
+
 export async function handleDepositBank(
   ws: WebSocket<WsUserData>,
   payload: unknown,

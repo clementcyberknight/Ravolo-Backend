@@ -23,6 +23,35 @@ export const acceptJoinSchema = z.object({
   userId: z.string().min(1).max(128),
 });
 
+export const kickMemberSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  userId: z.string().min(1).max(128),
+});
+
+export const promoteMemberSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  userId: z.string().min(1).max(128),
+});
+
+export const demoteMemberSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  userId: z.string().min(1).max(128),
+});
+
+export const cancelJoinRequestSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+});
+
+export const rejectJoinRequestSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  userId: z.string().min(1).max(128),
+});
+
 export const depositBankSchema = z.discriminatedUnion("kind", [
   z.object({
     requestId: requestIdSchema,

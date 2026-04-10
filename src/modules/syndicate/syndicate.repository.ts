@@ -3,6 +3,7 @@ import {
   syndicateBankGoldKey,
   syndicateBankItemsKey,
   syndicateChatKey,
+  syndicateHelpRequestsKey,
   syndicateContributionGoldKey,
   syndicateContributionItemsKey,
   syndicateIdolKey,
@@ -173,5 +174,22 @@ export class SyndicateRepository {
     const n = Math.max(1, Math.min(500, limit));
     return (await redis.lrange(syndicateChatKey(syndicateId), -n, -1)) ?? [];
   }
-}
 
+  async getHelpRequest(redis: Redis, syndicateId: string, requestId: string): Promise<Record<string, unknown> | null> {
+    const raw = await redis.hget(syndicateHelpRequestsKey(syndicateId), requestId);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  async setHelpRequest(redis: Redis, syndicateId: string, requestId: string, data: Record<string, unknown>): Promise<void> {
+    await redis.hset(syndicateHelpRequestsKey(syndicateId), requestId, JSON.stringify(data));
+  }
+
+  async deleteHelpRequest(redis: Redis, syndicateId: string, requestId: string): Promise<void> {
+    await redis.hdel(syndicateHelpRequestsKey(syndicateId), requestId);
+  }
+}

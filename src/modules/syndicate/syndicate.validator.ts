@@ -195,3 +195,16 @@ export const upgradeTroopSchema = z.object({
 export const viewTroopLevelsSchema = z.object({
   syndicateId: z.string().min(1).max(64),
 });
+
+export const syndicateHelpRequestSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  goldAmount: z.number().int().min(1).max(50_000),
+  message: z.string().trim().min(1).max(200),
+});
+
+export const syndicateHelpFulfillSchema = z.object({
+  requestId: requestIdSchema,
+  syndicateId: z.string().min(1).max(64),
+  helpRequestId: z.string().min(1).max(128),
+});

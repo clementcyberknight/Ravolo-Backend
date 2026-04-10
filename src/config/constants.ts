@@ -162,3 +162,11 @@ export const TROOP_MAX_LEVEL = 5;
 export const TROOP_UPGRADE_COSTS: number[] = [500, 1200, 2500, 5000];
 /** Power multiplier per level in basis points (10000 = 1.0×). Index 0 = level 1. */
 export const TROOP_LEVEL_POWER_BPS: number[] = [10000, 12500, 15000, 20000, 25000];
+
+// ── Syndicate Chat & Help Requests ──────────────────────────────────────
+/** Max gold a player can request per help request (integer gold). */
+export const HELP_REQUEST_MAX_GOLD = 50_000;
+/** Cooldown between help requests from the same user (ms). 5 minutes. */
+export const HELP_REQUEST_COOLDOWN_MS = 300_000;
+/** Help requests expire after this duration (ms). 24 hours. */
+export const HELP_REQUEST_TTL_MS = 86_400_000;

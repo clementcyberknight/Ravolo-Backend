@@ -42,6 +42,8 @@ export type WsInboundMessage =
   | { type: "GET_GAME_STATE"; payload?: unknown }
   | { type: "GET_PLOT_STATE"; payload?: unknown }
   | { type: "GET_GOLD_BALANCE"; payload?: unknown }
+  | { type: "SYNDICATE_HELP_REQUEST"; payload: unknown }
+  | { type: "SYNDICATE_HELP_FULFILL"; payload: unknown }
   | { type: "DECLARE_WAR"; payload: unknown }
   | { type: "WAR_ATTACK"; payload: unknown }
   | { type: "BUY_WAR_SHIELD"; payload: unknown }
@@ -90,6 +92,8 @@ export type WsOutboundMessage =
   | { type: "VIEW_LEADERBOARD_OK"; data: unknown }
   | { type: "SYNDICATE_DASHBOARD_OK"; data: unknown }
   | { type: "SYNDICATE_BANK_SELL_OK"; data: unknown }
+  | { type: "SYNDICATE_HELP_REQUEST_OK"; data: unknown }
+  | { type: "SYNDICATE_HELP_FULFILL_OK"; data: unknown }
   | { type: "AI_EVENT"; data: unknown }
   | {
       type: "GAME_STATUS";

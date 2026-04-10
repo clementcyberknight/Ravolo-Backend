@@ -60,6 +60,11 @@ export type AppErrorCode =
   | "MAX_ATTACKS_REACHED"
   | "SHIELD_ALREADY_ACTIVE"
   | "MAX_TROOP_LEVEL"
+  | "HELP_REQUEST_COOLDOWN"
+  | "HELP_REQUEST_NOT_FOUND"
+  | "HELP_REQUEST_EXPIRED"
+  | "HELP_SELF_FULFILL"
+  | "HELP_ALREADY_FULFILLED"
   | "INTERNAL";
 
 export class AppError extends Error {

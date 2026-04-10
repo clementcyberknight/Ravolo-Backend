@@ -284,6 +284,16 @@ export function syndicateChatKey(syndicateId: string): string {
   return `ravolo:syndicate:${syndicateId}:chat`;
 }
 
+/** Active help requests (HASH: requestId → JSON). */
+export function syndicateHelpRequestsKey(syndicateId: string): string {
+  return `ravolo:syndicate:${syndicateId}:help_requests`;
+}
+
+/** Per-user help request cooldown (STRING with TTL). */
+export function userHelpRequestCooldownKey(userId: string): string {
+  return `ravolo:user:${userId}:help_cooldown`;
+}
+
 export function syndicateMemberSeenKey(syndicateId: string): string {
   return `ravolo:syndicate:${syndicateId}:member_seen`;
 }

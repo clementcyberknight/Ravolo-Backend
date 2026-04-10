@@ -421,3 +421,37 @@ export async function handleSyndicateBankSell(
     handleErr(ws, userId, e, "syndicate bank sell failed");
   }
 }
+
+export async function handleSyndicateHelpRequest(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.helpRequest(userId, payload);
+    userActions.log(userId, "SYNDICATE_HELP_REQUEST", payload);
+    send(ws, { type: "SYNDICATE_HELP_REQUEST_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "help request failed");
+  }
+}
+
+export async function handleSyndicateHelpFulfill(
+  ws: WebSocket<WsUserData>,
+  payload: unknown,
+  syndicates: SyndicateService,
+  userActions: UserActionService,
+): Promise<void> {
+  const userId = ws.getUserData().userId;
+  if (!(await consume(userId, ws))) return;
+  try {
+    const data = await syndicates.helpFulfill(userId, payload);
+    userActions.log(userId, "SYNDICATE_HELP_FULFILL", payload);
+    send(ws, { type: "SYNDICATE_HELP_FULFILL_OK", data } satisfies WsOutboundMessage);
+  } catch (e) {
+    handleErr(ws, userId, e, "help fulfill failed");
+  }
+}

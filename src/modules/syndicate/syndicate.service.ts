@@ -9,6 +9,9 @@ import {
   PRICE_DEMAND_CLAMP,
   PRICE_SCARCITY_CLAMP,
   SPREAD_SELL_FACTOR,
+  HELP_REQUEST_MAX_GOLD,
+  HELP_REQUEST_COOLDOWN_MS,
+  HELP_REQUEST_TTL_MS,
 } from "../../config/constants.js";
 import { logger } from "../../infrastructure/logger/logger.js";
 import {
@@ -40,6 +43,8 @@ import {
   treasuryBuyFlowKey,
   treasurySellFlowKey,
   treasuryReserveKey,
+  syndicateHelpRequestsKey,
+  userHelpRequestCooldownKey,
 } from "../../infrastructure/redis/keys.js";
 import {
   redisSyndicateAcceptJoin,
@@ -54,6 +59,7 @@ import {
   redisSyndicatePromoteDemote,
   redisSyndicateRemoveJoinRequest,
   redisSyndicateRequestJoin,
+  redisHelpFulfill,
 } from "../../infrastructure/redis/commands.js";
 import { AppError } from "../../shared/errors/appError.js";
 import { sellPayoutGold, toSafeGold } from "../../shared/utils/gold.js";
@@ -90,6 +96,11 @@ import type {
   ViewBankQuery,
   ViewContributionQuery,
   ViewSyndicateMemberQuery,
+  ChatAlertType,
+  HelpRequestCommand,
+  HelpFulfillCommand,
+  HelpRequestResult,
+  HelpFulfillResult,
 } from "./syndicate.types.js";
 import {
   acceptJoinSchema,
@@ -112,6 +123,8 @@ import {
   viewBankSchema,
   viewContributionSchema,
   viewSyndicateMemberSchema,
+  syndicateHelpRequestSchema,
+  syndicateHelpFulfillSchema,
 } from "./syndicate.validator.js";
 import { getSyndicateIdolTradeMultipliers } from "./syndicateIdol.effects.js";
 
@@ -1014,10 +1027,194 @@ export class SyndicateService {
       );
     }
 
-    const line = JSON.stringify({ ts: nowMs(), userId, text: cmd.text });
+    const line = JSON.stringify({
+      kind: "chat" as const,
+      ts: nowMs(),
+      userId,
+      text: cmd.text,
+    });
     const k = syndicateChatKey(cmd.syndicateId);
     await this.redis.multi().rpush(k, line).ltrim(k, -CHAT_MAX, -1).exec();
     return { ok: true };
+  }
+
+  /**
+   * Push a system alert into syndicate chat. Internal-only — not exposed via WS.
+   * Called by other services (war, idol, bank sell, etc.).
+   */
+  async postAlert(
+    syndicateId: string,
+    alertType: ChatAlertType,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const line = JSON.stringify({
+      kind: "alert" as const,
+      ts: nowMs(),
+      alertType,
+      data,
+    });
+    const k = syndicateChatKey(syndicateId);
+    await this.redis.multi().rpush(k, line).ltrim(k, -CHAT_MAX, -1).exec();
+  }
+
+  async helpRequest(userId: string, raw: unknown): Promise<HelpRequestResult> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = syndicateHelpRequestSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid help request payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as HelpRequestCommand;
+
+    // Verify membership
+    const sid = await this.redis.get(userSyndicateIdKey(userId));
+    if (!sid || sid !== cmd.syndicateId)
+      throw new AppError("NOT_MEMBER" as never, "Not a member of this syndicate");
+
+    // Check gold amount bounds
+    if (cmd.goldAmount > HELP_REQUEST_MAX_GOLD) {
+      throw new AppError("BAD_REQUEST", `Max help request is ${HELP_REQUEST_MAX_GOLD} gold`);
+    }
+
+    // Check cooldown
+    const cooldownKey = userHelpRequestCooldownKey(userId);
+    const existing = await this.redis.get(cooldownKey);
+    if (existing) {
+      throw new AppError("HELP_REQUEST_COOLDOWN", "Please wait before creating another help request");
+    }
+
+    const now = nowMs();
+    const expiresAtMs = now + HELP_REQUEST_TTL_MS;
+    const helpRequestId = `help_${userId}_${now}`;
+
+    // Store in help requests HASH
+    const helpData = {
+      requestId: helpRequestId,
+      userId,
+      goldAmount: cmd.goldAmount,
+      message: cmd.message,
+      status: "open",
+      createdAtMs: now,
+      expiresAtMs,
+      fulfilledBy: null,
+    };
+    await this.repo.setHelpRequest(this.redis, cmd.syndicateId, helpRequestId, helpData);
+
+    // Push into chat
+    const chatLine = JSON.stringify({
+      kind: "help_request" as const,
+      ts: now,
+      requestId: helpRequestId,
+      userId,
+      goldAmount: cmd.goldAmount,
+      message: cmd.message,
+      status: "open",
+      fulfilledBy: null,
+    });
+    const k = syndicateChatKey(cmd.syndicateId);
+    await this.redis.multi().rpush(k, chatLine).ltrim(k, -CHAT_MAX, -1).exec();
+
+    // Set cooldown
+    const cooldownSec = Math.ceil(HELP_REQUEST_COOLDOWN_MS / 1000);
+    await this.redis.set(cooldownKey, "1", "EX", cooldownSec);
+
+    return {
+      requestId: helpRequestId,
+      goldAmount: cmd.goldAmount,
+      message: cmd.message,
+      expiresAtMs,
+    };
+  }
+
+  async helpFulfill(userId: string, raw: unknown): Promise<HelpFulfillResult> {
+    await this.onboarding.ensureOnboarded(userId);
+    const parsed = syndicateHelpFulfillSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new AppError("BAD_REQUEST", "Invalid help fulfill payload", {
+        issues: parsed.error.issues,
+      });
+    const cmd = parsed.data as HelpFulfillCommand;
+
+    // Verify membership
+    const sid = await this.redis.get(userSyndicateIdKey(userId));
+    if (!sid || sid !== cmd.syndicateId)
+      throw new AppError("NOT_MEMBER" as never, "Not a member of this syndicate");
+
+    // Get the help request to find the requester and amount
+    const helpReq = await this.repo.getHelpRequest(this.redis, cmd.syndicateId, cmd.helpRequestId);
+    if (!helpReq) {
+      throw new AppError("HELP_REQUEST_NOT_FOUND", "Help request not found or already fulfilled");
+    }
+
+    const requesterUserId = String(helpReq.userId ?? "");
+    const goldAmount = Number(helpReq.goldAmount ?? 0);
+
+    if (!requesterUserId || goldAmount <= 0) {
+      throw new AppError("HELP_REQUEST_NOT_FOUND", "Invalid help request data");
+    }
+
+    // Prevent self-fulfillment
+    if (userId === requesterUserId) {
+      throw new AppError("HELP_SELF_FULFILL", "Cannot fulfill your own help request");
+    }
+
+    // Check expiry
+    const expiresAtMs = Number(helpReq.expiresAtMs ?? 0);
+    if (expiresAtMs > 0 && nowMs() > expiresAtMs) {
+      await this.repo.deleteHelpRequest(this.redis, cmd.syndicateId, cmd.helpRequestId);
+      throw new AppError("HELP_REQUEST_EXPIRED", "This help request has expired");
+    }
+
+    // Atomic gold transfer via Lua
+    try {
+      const res = await redisHelpFulfill(
+        this.redis,
+        {
+          fulfillerWalletKey: walletKey(userId),
+          requesterWalletKey: walletKey(requesterUserId),
+          helpRequestsKey: syndicateHelpRequestsKey(cmd.syndicateId),
+          idempKey: `ravolo:${userId}:idemp:help_fulfill:${cmd.requestId}`,
+        },
+        {
+          fulfillerUserId: userId,
+          requesterUserId,
+          helpRequestId: cmd.helpRequestId,
+          goldAmount,
+          nowMs: nowMs(),
+          idempTtlSec: IDEMPOTENCY_TTL_SEC,
+        },
+      );
+
+      // Post alert into chat
+      await this.postAlert(cmd.syndicateId, "help_fulfilled", {
+        helpRequestId: cmd.helpRequestId,
+        fulfillerUserId: userId,
+        requesterUserId,
+        goldAmount,
+      });
+
+      return {
+        helpRequestId: cmd.helpRequestId,
+        fulfillerUserId: userId,
+        requesterUserId,
+        goldAmount: res.goldAmount,
+      };
+    } catch (e) {
+      if (typeof e === "object" && e !== null && "message" in e) {
+        const msg = String((e as { message: string }).message);
+        if (msg.includes("ERR_HELP_SELF_FULFILL"))
+          throw new AppError("HELP_SELF_FULFILL", "Cannot fulfill your own help request");
+        if (msg.includes("ERR_HELP_REQUEST_NOT_FOUND"))
+          throw new AppError("HELP_REQUEST_NOT_FOUND", "Help request not found or already fulfilled");
+        if (msg.includes("ERR_HELP_ALREADY_FULFILLED"))
+          throw new AppError("HELP_ALREADY_FULFILLED", "Help request already fulfilled");
+        if (msg.includes("ERR_HELP_REQUEST_EXPIRED"))
+          throw new AppError("HELP_REQUEST_EXPIRED", "This help request has expired");
+        if (msg.includes("ERR_INSUFFICIENT_GOLD"))
+          throw new AppError("INSUFFICIENT_GOLD", "Insufficient gold to fulfill this help request");
+      }
+      throw e;
+    }
   }
 
   async chatList(

@@ -318,3 +318,79 @@ export type TroopLevelsView = {
   crop_duster: number;
   siege_harvester: number;
 };
+
+// ── Chat Message Types ──────────────────────────────────────────────────
+
+export type ChatUserMessage = {
+  kind: "chat";
+  ts: number;
+  userId: string;
+  text: string;
+};
+
+export type ChatAlertType =
+  | "war_declared"
+  | "war_won"
+  | "war_lost"
+  | "war_draw"
+  | "idol_level_up"
+  | "idol_blessed"
+  | "idol_punished"
+  | "bank_sell"
+  | "shield_purchased"
+  | "member_joined"
+  | "member_left"
+  | "member_kicked"
+  | "troop_upgraded"
+  | "help_fulfilled";
+
+export type ChatAlertMessage = {
+  kind: "alert";
+  ts: number;
+  alertType: ChatAlertType;
+  data: Record<string, unknown>;
+};
+
+export type HelpRequestStatus = "open" | "fulfilled" | "expired";
+
+export type ChatHelpRequestMessage = {
+  kind: "help_request";
+  ts: number;
+  requestId: string;
+  userId: string;
+  goldAmount: number;
+  message: string;
+  status: HelpRequestStatus;
+  fulfilledBy: string | null;
+};
+
+export type ChatMessage = ChatUserMessage | ChatAlertMessage | ChatHelpRequestMessage;
+
+// ── Help Request Commands ───────────────────────────────────────────────
+
+export type HelpRequestCommand = {
+  requestId: string;
+  syndicateId: string;
+  goldAmount: number;
+  message: string;
+};
+
+export type HelpFulfillCommand = {
+  requestId: string;
+  syndicateId: string;
+  helpRequestId: string;
+};
+
+export type HelpRequestResult = {
+  requestId: string;
+  goldAmount: number;
+  message: string;
+  expiresAtMs: number;
+};
+
+export type HelpFulfillResult = {
+  helpRequestId: string;
+  fulfillerUserId: string;
+  requesterUserId: string;
+  goldAmount: number;
+};

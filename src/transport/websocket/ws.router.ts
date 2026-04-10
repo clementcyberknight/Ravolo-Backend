@@ -54,6 +54,8 @@ import {
   handleViewSyndicateMember,
   handleSyndicateBankSell,
   handleSyndicateDashboard,
+  handleSyndicateHelpRequest,
+  handleSyndicateHelpFulfill,
 } from "./handlers/syndicate.handler.js";
 import {
   handleDeclareWar,
@@ -271,6 +273,12 @@ export async function dispatchWsMessage(
       return;
     case "VIEW_TROOP_LEVELS":
       await handleViewTroopLevels(ws, msg.payload, ctx.wars);
+      return;
+    case "SYNDICATE_HELP_REQUEST":
+      await handleSyndicateHelpRequest(ws, msg.payload, ctx.syndicates, ctx.userActions);
+      return;
+    case "SYNDICATE_HELP_FULFILL":
+      await handleSyndicateHelpFulfill(ws, msg.payload, ctx.syndicates, ctx.userActions);
       return;
     default:
       logger.warn({ msg }, "unhandled ws message type");

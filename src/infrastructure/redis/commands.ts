@@ -65,6 +65,7 @@ let warPhaseAdvanceSha: string | null = null;
 let warSettleSha: string | null = null;
 let warBuyShieldSha: string | null = null;
 let upgradeTroopSha: string | null = null;
+let helpFulfillSha: string | null = null;
 
 export async function loadRedisScripts(redis: Redis): Promise<void> {
   const plantSrc = readFileSync(resolveLuaFile("plant.lua"), "utf8");
@@ -227,6 +228,8 @@ export async function loadRedisScripts(redis: Redis): Promise<void> {
   warBuyShieldSha = (await redis.script("LOAD", warBuyShieldSrc)) as string;
   const upgradeTroopSrc = readFileSync(resolveLuaFile("syndicateUpgradeTroop.lua"), "utf8");
   upgradeTroopSha = (await redis.script("LOAD", upgradeTroopSrc)) as string;
+  const helpFulfillSrc = readFileSync(resolveLuaFile("syndicateHelpFulfill.lua"), "utf8");
+  helpFulfillSha = (await redis.script("LOAD", helpFulfillSrc)) as string;
 }
 
 export function getRedeemRefreshTokenSha(): string {
@@ -2134,6 +2137,71 @@ export async function redisUpgradeTroop(
     if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
       await loadRedisScripts(redis);
       return redisUpgradeTroop(redis, keys, args);
+    }
+    throw e;
+  }
+}
+
+// ── Help Fulfill Wrapper ───────────────────────────────────────────────
+
+export type HelpFulfillLuaResult = {
+  helpRequestId: string;
+  fulfillerUserId: string;
+  requesterUserId: string;
+  goldAmount: number;
+};
+
+function parseHelpFulfillPayload(raw: string): HelpFulfillLuaResult {
+  const parts = raw.split("|");
+  if (parts[0] !== "OK" || parts.length !== 5) {
+    throw new Error(`Invalid help fulfill payload: ${raw}`);
+  }
+  return {
+    helpRequestId: parts[1]!,
+    fulfillerUserId: parts[2]!,
+    requesterUserId: parts[3]!,
+    goldAmount: Number(parts[4]),
+  };
+}
+
+export async function redisHelpFulfill(
+  redis: Redis,
+  keys: {
+    fulfillerWalletKey: string;
+    requesterWalletKey: string;
+    helpRequestsKey: string;
+    idempKey: string;
+  },
+  args: {
+    fulfillerUserId: string;
+    requesterUserId: string;
+    helpRequestId: string;
+    goldAmount: number;
+    nowMs: number;
+    idempTtlSec: number;
+  },
+): Promise<HelpFulfillLuaResult> {
+  if (!helpFulfillSha) throw new Error("Redis scripts not loaded");
+  try {
+    const res = (await redis.evalsha(
+      helpFulfillSha,
+      4,
+      keys.fulfillerWalletKey,
+      keys.requesterWalletKey,
+      keys.helpRequestsKey,
+      keys.idempKey,
+      args.fulfillerUserId,
+      args.requesterUserId,
+      args.helpRequestId,
+      String(args.goldAmount),
+      String(args.nowMs),
+      String(args.idempTtlSec),
+    )) as string;
+    return parseHelpFulfillPayload(res);
+  } catch (e) {
+    if (isReplyError(e) && e.message.includes("NOSCRIPT")) {
+      await loadRedisScripts(redis);
+      return redisHelpFulfill(redis, keys, args);
     }
     throw e;
   }

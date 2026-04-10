@@ -47,6 +47,7 @@ for (const name of [
   "syndicateWarSettle.lua",
   "syndicateWarBuyShield.lua",
   "syndicateUpgradeTroop.lua",
+  "syndicateHelpFulfill.lua",
 ]) {
   cpSync(join(srcDir, name), join(destDir, name));
 }

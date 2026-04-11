@@ -155,8 +155,23 @@ export function treasuryPriceHistoryKey(itemId: string): string {
   return `ravolo:${TREASURY_HASH_TAG}:ph:${itemId}`;
 }
 
-/** One-time Solana auth challenge message (UTF-8 string), keyed by challenge id. */
-export function authChallengeKey(challengeId: string): string {
+/**
+ * Auth challenge message (UTF-8), keyed by wallet family + optional chain + challenge id
+ * so a nonce cannot be reused across Solana vs EVM or across chains.
+ */
+export function authChallengeKey(
+  walletFamily: "solana" | "eip155",
+  chainId: number | undefined,
+  challengeId: string,
+): string {
+  if (walletFamily === "solana") {
+    return `ravolo:auth:challenge:solana:${challengeId}`;
+  }
+  return `ravolo:auth:challenge:eip155:${chainId}:${challengeId}`;
+}
+
+/** Legacy Solana-only key (pre–multi-wallet); verify path may fall back for in-flight challenges. */
+export function authChallengeKeyLegacySolana(challengeId: string): string {
   return `ravolo:auth:challenge:${challengeId}`;
 }
 

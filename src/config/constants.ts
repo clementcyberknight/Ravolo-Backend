@@ -1,3 +1,11 @@
+/** Monad mainnet — EIP-155 wallet auth (`walletFamily=eip155&chainId=143`). */
+export const MONAD_MAINNET_CHAIN_ID = 143;
+
+/** Chains allowed for `/auth/challenge` + `/auth/verify` when `walletFamily` is `eip155`. */
+export const AUTH_EIP155_ALLOWED_CHAIN_IDS: ReadonlySet<number> = new Set([
+  MONAD_MAINNET_CHAIN_ID,
+]);
+
 /** Idempotency key TTL for plant/harvest/trade replays (seconds). */
 export const IDEMPOTENCY_TTL_SEC = 86_400;
 

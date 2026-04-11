@@ -1,10 +1,15 @@
 import { randomUUID, randomBytes } from "node:crypto";
 import type { Redis } from "ioredis";
-import { STARTER_GOLD } from "../../config/constants.js";
+import { getAddress } from "viem";
+import {
+  AUTH_EIP155_ALLOWED_CHAIN_IDS,
+  STARTER_GOLD,
+} from "../../config/constants.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../infrastructure/logger/logger.js";
-import { authChallengeKey } from "../../infrastructure/redis/keys.js";
 import {
+  authChallengeKey,
+  authChallengeKeyLegacySolana,
   sessionRevokedKey,
   userSessionSetKey,
 } from "../../infrastructure/redis/keys.js";
@@ -18,6 +23,7 @@ import {
   redeemRefreshToken,
   revokeRefreshToken,
 } from "./refreshToken.redis.js";
+import { verifyEip191Signature } from "./evm.js";
 import { verifySolanaSignature } from "./solana.js";
 
 export type AuthChallenge = {
@@ -35,6 +41,22 @@ export type AuthVerifyResult = AuthSession & {
   isNewUser: boolean;
 };
 
+export type WalletFamily = "solana" | "eip155";
+
+export type CreateChallengeInput = {
+  walletFamily: WalletFamily;
+  /** Required when `walletFamily` is `eip155`. */
+  chainId?: number;
+};
+
+export type VerifyWalletInput = {
+  walletFamily: WalletFamily;
+  chainId?: number;
+  wallet: string;
+  signature: string;
+  challengeId: string;
+};
+
 export class AuthService {
   private readonly refreshTtlSec: number;
 
@@ -46,19 +68,50 @@ export class AuthService {
     this.refreshTtlSec = env.REFRESH_TOKEN_TTL_DAYS * 86_400;
   }
 
-  async createChallenge(): Promise<AuthChallenge> {
+  async createChallenge(input: CreateChallengeInput): Promise<AuthChallenge> {
+    if (input.walletFamily === "eip155") {
+      if (input.chainId === undefined) {
+        throw new AppError(
+          "BAD_REQUEST",
+          "chainId is required when walletFamily is eip155",
+        );
+      }
+      if (!AUTH_EIP155_ALLOWED_CHAIN_IDS.has(input.chainId)) {
+        throw new AppError(
+          "BAD_REQUEST",
+          "Unsupported chainId for wallet auth",
+        );
+      }
+    }
+
     const challengeId = randomUUID();
     const nonce = randomBytes(16).toString("hex");
-    const message = [
-      "Sign in to Ravolo",
-      "",
-      `Challenge: ${challengeId}`,
-      `Nonce: ${nonce}`,
-      `Time: ${new Date().toISOString()}`,
-    ].join("\n");
+    const message =
+      input.walletFamily === "solana"
+        ? [
+            "Sign in to Ravolo",
+            "",
+            `Challenge: ${challengeId}`,
+            `Nonce: ${nonce}`,
+            `Time: ${new Date().toISOString()}`,
+          ].join("\n")
+        : [
+            "Sign in to Ravolo",
+            "",
+            `Challenge: ${challengeId}`,
+            `Nonce: ${nonce}`,
+            `Chain ID: ${input.chainId}`,
+            `Time: ${new Date().toISOString()}`,
+          ].join("\n");
+
+    const redisKey = authChallengeKey(
+      input.walletFamily,
+      input.walletFamily === "eip155" ? input.chainId : undefined,
+      challengeId,
+    );
 
     await this.redis.set(
-      authChallengeKey(challengeId),
+      redisKey,
       message,
       "EX",
       env.AUTH_CHALLENGE_TTL_SEC,
@@ -68,12 +121,41 @@ export class AuthService {
   }
 
   async verifyChallengeAndUpsertProfile(
-    walletAddress: string,
-    signatureBase58: string,
-    challengeId: string,
+    input: VerifyWalletInput,
   ): Promise<AuthVerifyResult> {
-    const key = authChallengeKey(challengeId);
-    const message = await this.redis.get(key);
+    const { walletFamily, challengeId } = input;
+    const signature = input.signature;
+    let walletAddress = input.wallet.trim();
+
+    if (walletFamily === "eip155") {
+      if (input.chainId === undefined) {
+        throw new AppError(
+          "BAD_REQUEST",
+          "chainId is required when walletFamily is eip155",
+        );
+      }
+      if (!AUTH_EIP155_ALLOWED_CHAIN_IDS.has(input.chainId)) {
+        throw new AppError(
+          "BAD_REQUEST",
+          "Unsupported chainId for wallet auth",
+        );
+      }
+    }
+
+    const primaryKey = authChallengeKey(
+      walletFamily,
+      walletFamily === "eip155" ? input.chainId : undefined,
+      challengeId,
+    );
+    let message = await this.redis.get(primaryKey);
+    let resolvedKey = primaryKey;
+
+    if (!message && walletFamily === "solana") {
+      const legacyKey = authChallengeKeyLegacySolana(challengeId);
+      message = await this.redis.get(legacyKey);
+      if (message) resolvedKey = legacyKey;
+    }
+
     if (!message) {
       throw new AppError(
         "CHALLENGE_EXPIRED",
@@ -81,12 +163,25 @@ export class AuthService {
       );
     }
 
-    const ok = verifySolanaSignature(message, signatureBase58, walletAddress);
+    let ok: boolean;
+    if (walletFamily === "solana") {
+      ok = verifySolanaSignature(message, signature, walletAddress);
+    } else {
+      ok = await verifyEip191Signature(message, signature, walletAddress);
+      if (ok) {
+        try {
+          walletAddress = getAddress(walletAddress);
+        } catch {
+          ok = false;
+        }
+      }
+    }
+
     if (!ok) {
       throw new AppError("INVALID_SIGNATURE", "Signature verification failed");
     }
 
-    await this.redis.del(key);
+    await this.redis.del(resolvedKey);
 
     let isNewUser = false;
     let profile = await this.profiles.findByWallet(walletAddress);
@@ -100,7 +195,7 @@ export class AuthService {
           walletAddress,
           username: profile.username,
           achievements: profile.achievements,
-          starterGold: 250,
+          starterGold: STARTER_GOLD,
           starterPlots: 4,
           starterSeeds: { "seed:wheat": 2 },
         },

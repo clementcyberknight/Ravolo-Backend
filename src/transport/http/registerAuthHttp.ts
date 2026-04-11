@@ -1,8 +1,9 @@
 import type { HttpRequest, HttpResponse, TemplatedApp } from "uWebSockets.js";
 import { RateLimiterMemory } from "rate-limiter-flexible";
+import { AUTH_EIP155_ALLOWED_CHAIN_IDS } from "../../config/constants.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../shared/errors/appError.js";
-import type { AuthService } from "../../modules/auth/auth.service.js";
+import type { AuthService, WalletFamily } from "../../modules/auth/auth.service.js";
 import type { ProfileService } from "../../modules/profile/profile.service.js";
 import type { UserActionService } from "../../modules/user-actions/userAction.service.js";
 import { usernameUpdateSchema } from "../../modules/profile/username.validator.js";
@@ -80,6 +81,56 @@ function parseBearer(req: HttpRequest): string | null {
   return m?.[1] ?? null;
 }
 
+/** Legacy clients omit `walletFamily` → Solana. */
+function parseChallengeQuery(req: HttpRequest): {
+  walletFamily: WalletFamily;
+  chainId?: number;
+} | { error: string } {
+  const wfRaw = (req.getQuery("walletFamily") ?? "").trim().toLowerCase();
+  const chainRaw = (req.getQuery("chainId") ?? "").trim();
+
+  if (!wfRaw) {
+    return { walletFamily: "solana" };
+  }
+  if (wfRaw !== "solana" && wfRaw !== "eip155") {
+    return { error: "walletFamily must be solana or eip155" };
+  }
+  if (wfRaw === "solana") {
+    return { walletFamily: "solana" };
+  }
+  if (!chainRaw) {
+    return { error: "chainId is required when walletFamily is eip155" };
+  }
+  const chainId = Number.parseInt(chainRaw, 10);
+  if (!Number.isInteger(chainId) || chainId < 1) {
+    return { error: "chainId must be a positive integer" };
+  }
+  if (!AUTH_EIP155_ALLOWED_CHAIN_IDS.has(chainId)) {
+    return { error: "Unsupported chainId for wallet auth" };
+  }
+  return { walletFamily: "eip155", chainId };
+}
+
+function parseChainIdField(v: unknown): number | null {
+  if (typeof v === "number" && Number.isInteger(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number.parseInt(v.trim(), 10);
+    if (Number.isInteger(n)) return n;
+  }
+  return null;
+}
+
+function parseVerifyWalletFamily(
+  raw: unknown,
+): WalletFamily | null {
+  if (raw === undefined || raw === null) return "solana";
+  if (typeof raw !== "string") return null;
+  const s = raw.trim().toLowerCase();
+  if (!s || s === "solana") return "solana";
+  if (s === "eip155") return "eip155";
+  return null;
+}
+
 export function registerAuthHttp(app: TemplatedApp, deps: AuthHttpDeps): void {
   // OPTIONS preflight — must read origin synchronously before any async work.
   app.options("/*", (res, req) => {
@@ -115,11 +166,27 @@ export function registerAuthHttp(app: TemplatedApp, deps: AuthHttpDeps): void {
         return;
       }
       try {
-        const challenge = await deps.auth.createChallenge();
+        const parsed = parseChallengeQuery(req);
+        if ("error" in parsed) {
+          if (aborted) return;
+          sendJson(res, "400 Bad Request", {
+            error: "BAD_REQUEST",
+            message: parsed.error,
+          }, origin || undefined);
+          return;
+        }
+        const challenge = await deps.auth.createChallenge(parsed);
         if (aborted) return;
         sendJson(res, "200 OK", challenge, origin || undefined);
       } catch (e) {
         if (aborted) return;
+        if (e instanceof AppError && e.code === "BAD_REQUEST") {
+          sendJson(res, "400 Bad Request", {
+            error: e.code,
+            message: e.httpSafeMessage,
+          }, origin || undefined);
+          return;
+        }
         logger.error({ err: e }, "GET /auth/challenge failed");
         sendJson(res, "500 Internal Server Error", { error: "Internal error" }, origin || undefined);
       }
@@ -160,6 +227,8 @@ export function registerAuthHttp(app: TemplatedApp, deps: AuthHttpDeps): void {
         wallet?: string;
         signature?: string;
         challengeId?: string;
+        walletFamily?: unknown;
+        chainId?: unknown;
       };
       try {
         body = JSON.parse(raw) as typeof body;
@@ -181,14 +250,46 @@ export function registerAuthHttp(app: TemplatedApp, deps: AuthHttpDeps): void {
         return;
       }
 
+      const walletFamily = parseVerifyWalletFamily(body.walletFamily);
+      if (walletFamily === null) {
+        sendJson(res, "400 Bad Request", {
+          error: "BAD_REQUEST",
+          message: "walletFamily must be solana or eip155",
+        }, origin || undefined);
+        return;
+      }
+
+      let chainId: number | undefined;
+      if (walletFamily === "eip155") {
+        const cid = parseChainIdField(body.chainId);
+        if (cid === null) {
+          sendJson(res, "400 Bad Request", {
+            error: "BAD_REQUEST",
+            message: "chainId is required when walletFamily is eip155",
+          }, origin || undefined);
+          return;
+        }
+        if (!AUTH_EIP155_ALLOWED_CHAIN_IDS.has(cid)) {
+          sendJson(res, "400 Bad Request", {
+            error: "BAD_REQUEST",
+            message: "Unsupported chainId for wallet auth",
+          }, origin || undefined);
+          return;
+        }
+        chainId = cid;
+      }
+
       try {
-        const result = await deps.auth.verifyChallengeAndUpsertProfile(
+        const result = await deps.auth.verifyChallengeAndUpsertProfile({
+          walletFamily,
+          chainId,
           wallet,
           signature,
           challengeId,
-        );
-        void deps.userActions.log(result.profile.id, "AUTH_SOLANA_VERIFY", {
+        });
+        void deps.userActions.log(result.profile.id, "AUTH_WALLET_VERIFY", {
           isNewUser: result.isNewUser,
+          walletFamily,
         });
         const accessExp = accessTokenExpUnix(result.accessToken);
         sendJson(res, "200 OK", {

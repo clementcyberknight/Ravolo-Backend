@@ -44,32 +44,32 @@ function resolveTargetUserIdOrThrow(
   return userId ?? socketUserId;
 }
 
+import { getGameStatusPlotsData } from "../../../modules/farm/farm.service.js";
+import { getActiveEvent } from "../../../modules/ai-events/event.service.js";
+import { marketStatusToGoldUnits } from "../../../modules/market/market.types.js";
+import { syndicateMemberRolesKey, syndicateChatKey } from "../../../infrastructure/redis/keys.js";
+import type { ChatAlertMessage } from "../../../modules/syndicate/syndicate.types.js";
+
+const GAME_STATUS_PLOTS = getGameStatusPlotsData();
+
 /**
  * GET_GAME_STATE — returns the full snapshot of the authenticated player's state.
  * No payload required. All Redis reads are issued in parallel.
  *
- * Response type: GAME_STATE_OK
- * Fields:
- *   gold           — wallet gold balance (integer)
- *   level          — player level (integer)
- *   inventory      — { [item]: quantity } free inventory
- *   lockedInv      — { [item]: quantity } inventory locked as loan collateral
- *   plots          — array of plot state objects (plotId, cropId, plantedAtMs, readyAtMs, status)
- *   animal         — raw animal state hash (null if not yet set up)
- *   craftPending   — active craft job (null if none), with readyAtMs for countdown
- *   activeLoanId   — loanId string if loan is active, null otherwise
- *   syndicateId    — syndicateId string if in a syndicate, null otherwise
- *   serverNowMs    — server timestamp so client can compute timers without drift
+ * Response type: GAME_STATUS
  */
 export async function handleGetGameState(
   ws: WebSocket<WsUserData>,
   redis: Redis,
+  market: MarketService,
 ): Promise<void> {
   const { userId } = ws.getUserData();
 
   try {
     // ── Fetch everything in parallel ──────────────────────────────────────────
     const [
+      prices,
+      activeEvent,
       walletRaw,
       levelRaw,
       invRaw,
@@ -79,6 +79,8 @@ export async function handleGetGameState(
       activeLoanId,
       syndicateId,
     ] = await Promise.all([
+      market.getAllPrices(),
+      getActiveEvent(redis),
       redis.hgetall(walletKey(userId)),
       redis.get(userLevelKey(userId)),
       redis.hgetall(inventoryKey(userId)),
@@ -90,9 +92,6 @@ export async function handleGetGameState(
     ]);
 
     // ── Parse wallet ──────────────────────────────────────────────────────────
-    // The Lua treasury scripts store gold as whole gold units (not micro-gold).
-    // HINCRBY KEYS[walletKey] 'gold' pay — where pay = sellPayoutGold() in whole gold.
-    // Do NOT divide by PRICE_MICRO_PER_GOLD here.
     const gold = Math.max(0, Math.floor(Number(walletRaw?.gold ?? 0)));
 
     // ── Parse level ───────────────────────────────────────────────────────────
@@ -134,18 +133,51 @@ export async function handleGetGameState(
       };
     }
 
+    // ── Parse syndicate and its alerts ────────────────────────────────────────
+    let syndicateInfo = null;
+    if (syndicateId) {
+      // Get role and recent chat
+      const [role, chatRows] = await Promise.all([
+        redis.hget(syndicateMemberRolesKey(syndicateId), userId),
+        redis.lrange(syndicateChatKey(syndicateId), -50, -1),
+      ]);
+      const alerts: ChatAlertMessage[] = [];
+      for (const row of chatRows) {
+        try {
+          const parsed = JSON.parse(row);
+          if (now - parsed.ts <= 60000) {
+            if (parsed.kind === "alert") {
+              alerts.push(parsed as ChatAlertMessage);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+      syndicateInfo = {
+        id: syndicateId,
+        role: role ?? "member",
+        alerts,
+      };
+    }
+
     send(ws, {
-      type: "GAME_STATE_OK",
+      type: "GAME_STATUS",
       data: {
-        gold,
-        level,
-        inventory,
-        lockedInv,
-        plots,
-        animal,
-        craftPending,
-        activeLoanId: activeLoanId ?? null,
-        syndicateId: syndicateId ?? null,
+        status: {
+          prices: marketStatusToGoldUnits(prices),
+          plots: GAME_STATUS_PLOTS,
+          activeEvent,
+        },
+        user: {
+          gold,
+          level,
+          inventory,
+          lockedInv,
+          plots,
+          animal,
+          craftPending,
+          activeLoanId: activeLoanId ?? null,
+        },
+        syndicate: syndicateInfo,
         serverNowMs: now,
       },
     });

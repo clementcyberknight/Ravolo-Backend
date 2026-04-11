@@ -336,11 +336,14 @@ export type ChatAlertType =
   | "idol_level_up"
   | "idol_blessed"
   | "idol_punished"
+  | "new_idol_request"
   | "bank_sell"
   | "shield_purchased"
   | "member_joined"
   | "member_left"
   | "member_kicked"
+  | "member_promoted"
+  | "member_demoted"
   | "troop_upgraded"
   | "help_fulfilled";
 

@@ -31,6 +31,7 @@ import {
   syndicateBankItemsKey,
   syndicateDefensePowerKey,
   syndicateTroopLevelsKey,
+  syndicateChatKey,
 } from "../../infrastructure/redis/keys.js";
 import {
   redisWarDeclare,
@@ -109,6 +110,12 @@ export class WarService {
           startingInfamy: WAR_STARTING_INFAMY,
         },
       );
+
+      // Alert members that we have started matchmaking for war
+      await this.postAlert(cmd.syndicateId, "war_declared", {
+        actorUserId: userId,
+      });
+
       return { queued: true, syndicateId: res.syndicateId, infamy: res.infamy };
     } catch (e) {
       throw this.mapLuaError(e);
@@ -417,6 +424,22 @@ export class WarService {
     const { syndicateId } = parsed.data;
     const levels = await this.repo.getTroopLevels(this.redis, syndicateId);
     return levels as TroopLevelsView;
+  }
+
+  private async postAlert(
+    syndicateId: string,
+    alertType: import("./syndicate.types.js").ChatAlertType,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const ts = Date.now();
+    const line = JSON.stringify({
+      kind: "alert",
+      ts,
+      alertType,
+      data,
+    });
+    const k = syndicateChatKey(syndicateId);
+    await this.redis.multi().rpush(k, line).ltrim(k, -100, -1).exec(); // Hardcoded CHAT_MAX=100
   }
 
   private mapLuaError(e: unknown): AppError {

@@ -13,6 +13,7 @@ import {
   syndicateIdolKey,
   syndicateIdolRequestKey,
   treasurySellFlowKey,
+  syndicateChatKey,
 } from "../infrastructure/redis/keys.js";
 import { PRICED_ITEM_IDS } from "../modules/market/market.catalog.js";
 import { serverNowMs } from "../shared/utils/time.js";
@@ -78,6 +79,22 @@ export async function runIdolRequestTick(redis: Redis): Promise<void> {
         String(deadline),
       );
       w.hset(idolK, "currentRequestKey", reqKey);
+
+      // Add chat alert for the new request
+      const alertLine = JSON.stringify({
+        kind: "alert",
+        ts: now,
+        alertType: "new_idol_request",
+        data: {
+          item: targetCommodity,
+          amount: scaledAmount,
+          deadlineMs: deadline,
+        },
+      });
+      const chatK = syndicateChatKey(sid);
+      w.rpush(chatK, alertLine);
+      w.ltrim(chatK, -100, -1);
+
       await w.exec();
 
       broadcastToSyndicate(sid, {

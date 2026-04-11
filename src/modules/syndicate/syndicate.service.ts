@@ -357,6 +357,12 @@ export class SyndicateService {
       throw this.mapLuaError(e);
     }
 
+    // Post alert into chat
+    await this.postAlert(cmd.syndicateId, "member_joined", {
+      userId: cmd.userId,
+      actorUserId: userId,
+    });
+
     return { ok: true };
   }
 
@@ -774,6 +780,13 @@ export class SyndicateService {
     } catch (e) {
       throw this.mapLuaError(e);
     }
+
+    // Post alert into chat
+    await this.postAlert(cmd.syndicateId, "member_promoted", {
+      userId: cmd.userId,
+      actorUserId: userId,
+    });
+
     return { ok: true };
   }
 
@@ -806,6 +819,13 @@ export class SyndicateService {
     } catch (e) {
       throw this.mapLuaError(e);
     }
+
+    // Post alert into chat
+    await this.postAlert(cmd.syndicateId, "member_demoted", {
+      userId: cmd.userId,
+      actorUserId: userId,
+    });
+
     return { ok: true };
   }
 
@@ -1231,10 +1251,13 @@ export class SyndicateService {
       throw new AppError("NOT_MEMBER" as never, "Not a member");
 
     const rows = await this.repo.chatRecent(this.redis, syndicateId, 50);
+    const now = nowMs();
     const msgs = rows
       .map((x) => {
         try {
-          return JSON.parse(x) as unknown;
+          const parsed = JSON.parse(x) as { ts?: number };
+          if (!parsed.ts || now - parsed.ts > 60000) return null;
+          return parsed;
         } catch {
           return null;
         }

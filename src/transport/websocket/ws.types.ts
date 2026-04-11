@@ -98,46 +98,49 @@ export type WsOutboundMessage =
   | {
       type: "GAME_STATUS";
       data: {
-        prices: import("../../modules/market/market.types.js").MarketStatusGold;
-        plots: {
-          starterPlots: number;
-          starterPlotIds: number[];
-          purchasable: boolean;
-          maxPlots: number;
-          purchaseBaseGold: number;
-          purchaseStepGold: number;
-          pricingFormula: string;
-          loanCollateralValueGold: number;
-          note: string;
+        status?: {
+          prices: import("../../modules/market/market.types.js").MarketStatusGold;
+          plots: {
+            starterPlots: number;
+            starterPlotIds: number[];
+            purchasable: boolean;
+            maxPlots: number;
+            purchaseBaseGold: number;
+            purchaseStepGold: number;
+            pricingFormula: string;
+            loanCollateralValueGold: number;
+            note: string;
+          };
+          activeEvent: any | null;
         };
-        activeEvent: any | null;
+        user?: {
+          gold: number;
+          level: number;
+          inventory: Record<string, number>;
+          lockedInv: Record<string, number>;
+          plots: {
+            plotId: number;
+            cropId: string | null;
+            plantedAtMs: number | null;
+            readyAtMs: number | null;
+            msUntilReady: number | null;
+            status: "empty" | "growing" | "ready" | "withered";
+            wither?: boolean;
+            outputQty?: number | null;
+            harvestItem?: string | null;
+          }[];
+          animal: Record<string, string> | null;
+          craftPending: Record<string, string | number> | null;
+          activeLoanId: string | null;
+        };
+        syndicate?: {
+          id: string;
+          role: string;
+          alerts: import("../../modules/syndicate/syndicate.types.js").ChatAlertMessage[];
+        } | null;
         serverNowMs: number;
       };
     }
-  | { type: "GAME_STATE"; data: { inventory: Record<string, number>; gold: number; plots: any[] } }
-  | { type: "GAME_STATE_OK"; data: {
-      gold: number;
-      level: number;
-      inventory: Record<string, number>;
-      lockedInv: Record<string, number>;
-      plots: {
-        plotId: number;
-        cropId: string | null;
-        plantedAtMs: number | null;
-        readyAtMs: number | null;
-        msUntilReady: number | null;
-        status: "empty" | "growing" | "ready" | "withered";
-        wither?: boolean;
-        outputQty?: number | null;
-        harvestItem?: string | null;
-      }[];
-      animal: Record<string, string> | null;
-      craftPending: Record<string, string | number> | null;
-      activeLoanId: string | null;
-      syndicateId: string | null;
-      serverNowMs: number;
-    };
-  }
   | {
       type: "GET_PLOT_STATE_OK";
       data: {

@@ -15,6 +15,7 @@ import { packGameMessage, sendGameMessage } from "./ws.codec.js";
 import { serverNowMs } from "../../shared/utils/time.js";
 import { dispatchWsMessage, type WsGameContext } from "./ws.router.js";
 import type { WsOutboundMessage, WsUserData } from "./ws.types.js";
+import { handleGetGameState } from "./handlers/gameState.handler.js";
 
 // Global reference for broadcasting outside WS handlers (e.g. workers)
 let globalApp: ReturnType<typeof App> | null = null;
@@ -45,9 +46,11 @@ export async function broadcastGameStatus(ctx: WsAppContext) {
     broadcastToAll({
       type: "GAME_STATUS",
       data: {
-        prices: marketStatusToGoldUnits(prices),
-        plots: GAME_STATUS_PLOTS,
-        activeEvent,
+        status: {
+          prices: marketStatusToGoldUnits(prices),
+          plots: GAME_STATUS_PLOTS,
+          activeEvent,
+        },
         serverNowMs: serverNowMs(),
       },
     });
@@ -188,29 +191,7 @@ export function createWsApp(ctx: WsAppContext) {
       logger.debug({ userId }, "ws connected");
       void (async () => {
         try {
-          const [prices, activeEvent, gold, inventory, plots] =
-            await Promise.all([
-              ctx.market.getAllPrices(),
-              getActiveEvent(ctx.redis),
-              ctx.market.getUserGold(userId),
-              ctx.market.getUserInventory(userId),
-              ctx.planting.getPlots(userId),
-            ]);
-
-          sendGameMessage(ws, {
-            type: "GAME_STATUS",
-            data: {
-              prices: marketStatusToGoldUnits(prices),
-              plots: GAME_STATUS_PLOTS,
-              activeEvent,
-              serverNowMs: serverNowMs(),
-            },
-          });
-
-          sendGameMessage(ws, {
-            type: "GAME_STATE",
-            data: { inventory, gold, plots },
-          });
+          await handleGetGameState(ws, ctx.redis, ctx.market);
 
           // Subscribe to global broadcasts only after the initial state has
           // been unicast to this client, avoiding a duplicate GAME_STATUS.

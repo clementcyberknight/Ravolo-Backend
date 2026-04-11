@@ -131,7 +131,7 @@ export async function dispatchWsMessage(
       await handleBuy(ws, msg.payload, ctx.market, ctx.userActions);
       return;
     case "BUY_PLOT":
-      await handleBuyPlot(ws, msg.payload, ctx.redis, ctx.farm, ctx.userActions);
+      await handleBuyPlot(ws, msg.payload, ctx.redis, ctx.farm, ctx.userActions, ctx.market);
       return;
     case "LOAN_OPEN":
       await handleLoanOpen(ws, msg.payload, ctx.loan, ctx.userActions);
@@ -242,7 +242,7 @@ export async function dispatchWsMessage(
       await handleViewLeaderboard(ws, msg.payload, ctx);
       return;
     case "GET_GAME_STATE":
-      await handleGetGameState(ws, ctx.redis);
+      await handleGetGameState(ws, ctx.redis, ctx.market);
       return;
     case "GET_PLOT_STATE":
       await handleGetPlotState(ws, msg.payload, ctx.farm);

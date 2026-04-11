@@ -3,6 +3,7 @@ import type { Redis } from "ioredis";
 import { logger } from "../../../infrastructure/logger/logger.js";
 import type { FarmService } from "../../../modules/farm/farm.service.js";
 import type { UserActionService } from "../../../modules/user-actions/userAction.service.js";
+import type { MarketService } from "../../../modules/market/market.service.js";
 import { AppError } from "../../../shared/errors/appError.js";
 import { handleGetGameState } from "./gameState.handler.js";
 import { wsActionLimiter } from "../ws.rateLimiter.js";
@@ -15,6 +16,7 @@ export async function handleBuyPlot(
   redis: Redis,
   farm: FarmService,
   userActions: UserActionService,
+  market: MarketService,
 ): Promise<void> {
   const userId = ws.getUserData().userId;
   try {
@@ -32,7 +34,7 @@ export async function handleBuyPlot(
     const data = await farm.buyPlot(userId, payload);
     void userActions.log(userId, "BUY_PLOT", payload);
     send(ws, { type: "BUY_PLOT_OK", data });
-    await handleGetGameState(ws, redis);
+    await handleGetGameState(ws, redis, market);
   } catch (e) {
     if (e instanceof AppError) {
       logger.warn({ e: e.code, userId }, e.message);

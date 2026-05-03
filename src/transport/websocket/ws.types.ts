@@ -164,3 +164,5 @@ export type WsOutboundMessage =
   | { type: "VIEW_TROOP_LEVELS_OK"; data: unknown }
   | { type: "ERROR"; code: string; message: string; details?: unknown }
   | { type: "PONG"; serverNowMs: number; clientTs?: unknown };
+
+  //fix 
